@@ -665,3 +665,12 @@ a {
 .lowfx .hud-btn--ghost {
   background: rgba(20, 26, 38, 0.82);
 }
+
+/* the visitor's Motion switch (engine.motion = false) mirrors reduced motion */
+html.motion-off *,
+html.motion-off *::before,
+html.motion-off *::after {
+  transition-duration: 0s !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+}
