@@ -22,6 +22,7 @@ export const CONCEPTS = [
   { name: 'Press', slug: 'hark-press' },
   { name: 'Town', slug: 'hark-town' },
   { name: 'Arcade', slug: 'hark-arcade' },
+  { name: 'Tower', slug: 'hark-tower' },
 ].map(c => ({ ...c, url: `https://harkdigital.github.io/${c.slug}/` }))
 
 /** The other concepts (everything except this one). */
