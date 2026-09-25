@@ -1,6 +1,6 @@
-// THEME: fonts (@fontsource packages). Neutral defaults: Inter + JetBrains Mono.
-import '@fontsource-variable/inter'
-import '@fontsource-variable/jetbrains-mono'
+// Fonts: Geist (display + body) and Geist Mono (labels).
+import '@fontsource-variable/geist'
+import '@fontsource-variable/geist-mono'
 import './styles/base.css'
 import './ui/ui.css'
 

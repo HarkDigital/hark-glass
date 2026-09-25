@@ -6,20 +6,25 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js'
 
 /*
- * Post-processing: Render → Sanitize (NaN guard) → Bloom → Output → FINAL.
+ * Post-processing for Hark Glass: Render → Sanitize (NaN guard) → Bloom →
+ * Output → FINAL.
  *
- * THEME: the FINAL pass is where a concept gets its signature look and its
- * chapter-cut transition. Previous concepts replaced it with:
- *   Orbit      glitch tear + zoom blur + white-green flash
- *   Resonance  pressure-wave ripple + paper wash
- *   Press      ink densities → rotated halftone screens (riso)
- *   Town       tilt-shift blur + miniature saturation + cloud wipe
- *   Arcade     pixelate + palette snap + Bayer dither + CRT + iris wipe
+ * The FINAL pass is a clean lens: faint radial chromatic aberration, a soft
+ * vignette, fine grain, flash and fade, plus two glass effects:
  *
- * This neutral version: soft radial wipe to `uCutColor` at cuts, gentle
- * chromatic aberration, vignette, grain, flash and fade. Keep the Post API
- * (params / resetParams / setSize / render / compileAsync / setFadeTone) and
- * the uTransition / uFade / uFlash / uGlitch uniforms — the engine drives them.
+ *  - FROST (params.frost 0..1): the whole frame seen through frosted glass —
+ *    a grainy spiral blur with a pale sheen. Chapters use it for depth moments.
+ *  - THE PANE (the chapter cut): a vast sheet of frosted glass sweeps across
+ *    the screen on a shallow diagonal. Its leading edge is a thick bevel that
+ *    bends the image and splits it into colour; behind it, everything is
+ *    frosted. At the boundary (uTransition = 1) the pane covers the whole
+ *    frame, frosted deepest, which hides the swap; after it, the pane carries
+ *    on and leaves by the far edge (uCutSide tells the shader which half of
+ *    the sweep it is in).
+ *
+ * Keep the Post API (params / resetParams / setSize / render / compileAsync /
+ * setFadeTone / cutSide) and the uTransition / uFade / uFlash / uGlitch
+ * uniforms — the engine drives them.
  */
 
 const FinalShader = {
@@ -30,18 +35,22 @@ const FinalShader = {
     uDpr: { value: 1 },
     /** 0..1, peaks exactly at a chapter boundary (engine-driven) */
     uTransition: { value: 0 },
-    /** 0..1 wobble a chapter can add (THEME: glitch / heat shimmer / VHS …) */
+    /** -1 approaching the boundary, +1 leaving it */
+    uCutSide: { value: 1 },
+    /** 0..1 heat-shimmer refraction a chapter can add */
     uGlitch: { value: 0 },
-    uAberration: { value: 0.0015 },
-    uGrain: { value: 0.03 },
-    uVignette: { value: 0.3 },
+    uAberration: { value: 0.0012 },
+    uGrain: { value: 0.022 },
+    uVignette: { value: 0.28 },
     /** 0..1 wash to white */
     uFlash: { value: 0 },
     /** 0..1 fade to uFadeColor (reduced-motion cuts) */
     uFade: { value: 0 },
-    /** colour the cut wipes through (THEME) */
-    uCutColor: { value: new THREE.Color('#0d0f12') },
-    uFadeColor: { value: new THREE.Color('#0d0f12') },
+    /** 0..1 whole-frame frosted glass */
+    uFrost: { value: 0 },
+    /** the pane's glass tint */
+    uTint: { value: new THREE.Color('#dff7ee') },
+    uFadeColor: { value: new THREE.Color('#0b1017') },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -49,38 +58,96 @@ const FinalShader = {
   `,
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
-    uniform float uTime, uDpr, uTransition, uGlitch, uAberration, uGrain, uVignette, uFlash, uFade;
+    uniform float uTime, uDpr, uTransition, uCutSide, uGlitch, uAberration, uGrain, uVignette, uFlash, uFade, uFrost;
     uniform vec2 uResolution;
-    uniform vec3 uCutColor, uFadeColor;
+    uniform vec3 uTint, uFadeColor;
     varying vec2 vUv;
 
     float hash(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 
+    // grainy spiral blur: frosted glass scatters, so per-pixel jitter is the look
+    vec3 frosted(vec2 uv, float radiusPx) {
+      vec2 px = 1.0 / uResolution;
+      float a0 = hash(gl_FragCoord.xy) * 6.2831853;
+      vec3 acc = vec3(0.0);
+      for (int i = 0; i < 14; i++) {
+        float fi = float(i);
+        float r = sqrt((fi + 0.5) / 14.0) * radiusPx;
+        float a = a0 + fi * 2.3999632;
+        acc += texture2D(tDiffuse, uv + vec2(cos(a), sin(a)) * r * px).rgb;
+      }
+      return acc / 14.0;
+    }
+
     void main() {
       vec2 uv = vUv;
-      float g = clamp(uGlitch, 0.0, 1.0);
-      uv.x += g * 0.004 * sin(uv.y * 60.0 + uTime * 12.0);
-
+      float aspect = uResolution.x / max(uResolution.y, 1.0);
       vec2 c = uv - 0.5;
+
+      // heat shimmer (chapters: e.g. the breach in 'Tempered')
+      float g = clamp(uGlitch, 0.0, 1.0);
+      uv += g * 0.006 * vec2(sin(uv.y * 38.0 + uTime * 5.0), cos(uv.x * 31.0 - uTime * 4.0));
+
+      // lens: faint radial chromatic aberration
       vec3 col;
       col.r = texture2D(tDiffuse, uv + c * uAberration).r;
       col.g = texture2D(tDiffuse, uv).g;
       col.b = texture2D(tDiffuse, uv - c * uAberration).b;
 
-      // THEME: the chapter-cut transition. Neutral: a soft radial wipe that
-      // closes toward the centre at the boundary (t = 1) and reopens after.
+      float blurPx = 26.0 * uDpr;
+
+      // whole-frame frost
+      float fr = clamp(uFrost, 0.0, 1.0);
+      if (fr > 0.002) {
+        vec3 f = frosted(uv, blurPx * fr * 1.4);
+        f = mix(f, uTint, 0.1 * fr) + 0.03 * fr;
+        col = mix(col, f, smoothstep(0.0, 0.35, fr));
+      }
+
+      // ---- THE PANE (chapter cut)
       float t = clamp(uTransition, 0.0, 1.0);
       if (t > 0.001) {
-        float aspect = uResolution.x / max(uResolution.y, 1.0);
-        float r = length(c * vec2(aspect, 1.0));
-        float reach = (1.0 - t) * 1.1;
-        float wipe = 1.0 - smoothstep(reach - 0.12, reach, r);
-        col = mix(uCutColor, col, wipe);
+        vec2 dir = normalize(vec2(1.0, 0.32));
+        vec2 pa = vec2(c.x * aspect, c.y);
+        float span = 0.5 * (aspect * abs(dir.x) + abs(dir.y));
+        float u = (dot(pa, dir) + span) / (2.0 * span);          // 0 at the first corner, 1 at the last
+        float ease = t * t * (3.0 - 2.0 * t);
+        float s = uCutSide < 0.0 ? 0.5 * ease : 1.0 - 0.5 * ease;   // 0 → 0.5 at the boundary → 1
+        float lead = s * 2.0 + 0.04;
+        float trail = s * 2.0 - 1.04;
+        float bevel = 0.05;
+        float inside = step(trail, u) * step(u, lead);
+        if (inside > 0.5) {
+          // distance to the nearest edge (in sweep units) → bevel profile
+          float dLead = lead - u;
+          float dTrail = u - trail;
+          float dEdge = min(dLead, dTrail);
+          float bev = 1.0 - smoothstep(0.0, bevel, dEdge);       // 1 at the edge, 0 in the body
+          float sgn = dLead < dTrail ? 1.0 : -1.0;
+          // the bevel bends the image along the sweep and splits colour
+          vec2 bend = vec2(dir.x / aspect, dir.y) * sgn * bev * bev * 0.06;
+          vec2 body = vec2(dir.x / aspect, dir.y) * 0.012;       // the slab's own offset
+          vec2 suv = uv + body + bend;
+          float depth = mix(0.55, 1.0, t);                        // frost deepens toward the boundary
+          vec3 f = frosted(suv, blurPx * depth);
+          vec3 disp = vec3(
+            texture2D(tDiffuse, suv + bend * 0.9).r,
+            texture2D(tDiffuse, suv).g,
+            texture2D(tDiffuse, suv - bend * 0.9).b
+          );
+          vec3 pane = mix(f, disp, bev * 0.85);
+          // pale glass body, a soft diagonal sheen, a crisp highlight on each edge
+          float sheen = 0.5 + 0.5 * sin((u - s * 2.0) * 9.0);
+          pane = mix(pane, uTint, 0.12 + 0.18 * t) + (0.025 + 0.05 * t) * sheen;
+          pane += vec3(0.9, 1.0, 0.95) * exp(-dEdge * dEdge / 0.00002) * 0.55;
+          pane += vec3(1.0) * exp(-(dEdge - 0.012) * (dEdge - 0.012) / 0.00006) * bev * 0.12;
+          col = pane;
+        }
       }
 
       col = mix(col, vec3(1.0), clamp(uFlash, 0.0, 1.0));
       float v = 1.0 - smoothstep(0.35, 1.05, length(c * vec2(1.0, 0.9)) * 1.4);
-      col *= mix(1.0, 0.55 + 0.45 * v, uVignette);
+      col *= mix(1.0, 0.6 + 0.4 * v, uVignette);
       col += (hash(vUv * uResolution + fract(uTime * 7.13) * 91.0) - 0.5) * uGrain;
       col = mix(col, uFadeColor, clamp(uFade, 0.0, 1.0));
       gl_FragColor = vec4(col, 1.0);
@@ -95,26 +162,31 @@ export type PostParams = {
   aberration: number
   grain: number
   vignette: number
-  /** wobble 0..1 */
+  /** heat shimmer 0..1 */
   glitch: number
   /** white wash 0..1 */
   flash: number
   exposure: number
-  // THEME: add your look's params here (and damp them in render()).
+  /** whole-frame frosted glass 0..1 */
+  frost: number
 }
 
-/** Bloom only catches HDR (> ~1.0): emissive lamps, LEDs, speculars. */
+/** Bloom catches only HDR: studio reflections on glass, lit edges, emissive cores. */
 export const POST_DEFAULTS: PostParams = {
-  bloomStrength: 0.45,
-  bloomRadius: 0.4,
-  bloomThreshold: 1.0,
-  aberration: 0.0015,
-  grain: 0.03,
-  vignette: 0.3,
+  bloomStrength: 0.42,
+  bloomRadius: 0.55,
+  bloomThreshold: 0.92,
+  aberration: 0.0012,
+  grain: 0.022,
+  vignette: 0.28,
   glitch: 0,
   flash: 0,
   exposure: 1,
+  frost: 0,
 }
+
+/** minimum seconds between two white-flash onsets (WCAG 2.3.1) */
+const FLASH_GAP = 0.4
 
 /**
  * Scrubs NaN/Inf and clamps runaway HDR right after the scene render. A single
@@ -148,7 +220,12 @@ export class Post {
   params: PostParams = { ...POST_DEFAULTS }
   private current: PostParams = { ...POST_DEFAULTS }
   transition = 0
+  /** -1 while approaching a chapter boundary, +1 after it (engine-driven) */
+  cutSide = 1
   fade = 0
+  private lastFlashAt = -1e9
+  private flashLive = false
+  private flashOk = true
 
   constructor(
     private renderer: THREE.WebGLRenderer,
@@ -165,20 +242,24 @@ export class Post {
     this.composer = new EffectComposer(renderer, rt)
     this.composer.addPass(new RenderPass(scene, camera))
     this.composer.addPass(new ShaderPass(SanitizeShader))
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), 0.45, 0.4, 1.0)
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), 0.42, 0.55, 0.92)
     this.composer.addPass(this.bloom)
     this.composer.addPass(new OutputPass())
     this.final = new ShaderPass(FinalShader)
     this.composer.addPass(this.final)
   }
 
-  /** THEME: colour the cut and reduced-motion fade pass through. */
+  /** Colour the reduced-motion fade passes through. */
   setCutColor(color: THREE.ColorRepresentation) {
-    ;(this.final.uniforms.uCutColor.value as THREE.Color).set(color)
     ;(this.final.uniforms.uFadeColor.value as THREE.Color).set(color)
   }
 
-  /** Engine hook (kept for compatibility; themes may tint the fade by scene tone). */
+  /** Tint of the sweeping pane (defaults to a pale mint glass). */
+  setPaneTint(color: THREE.ColorRepresentation) {
+    ;(this.final.uniforms.uTint.value as THREE.Color).set(color)
+  }
+
+  /** Engine hook (kept for compatibility). */
   setFadeTone(_tone: number) {}
 
   resetParams() {
@@ -222,6 +303,16 @@ export class Post {
       // flash & glitch respond instantly so chapters can punch them
       c[key] = key === 'flash' || key === 'glitch' ? p[key] : c[key] + (p[key] - c[key]) * k
     }
+    // flash budget: a new flash that starts within FLASH_GAP of the last one
+    // is dropped for its whole duration
+    if (c.flash > 0.02) {
+      if (!this.flashLive) {
+        this.flashLive = true
+        this.flashOk = time - this.lastFlashAt >= FLASH_GAP
+        if (this.flashOk) this.lastFlashAt = time
+      }
+      if (!this.flashOk) c.flash = 0
+    } else this.flashLive = false
     this.bloom.strength = c.bloomStrength
     this.bloom.radius = c.bloomRadius
     this.bloom.threshold = c.bloomThreshold
@@ -229,11 +320,13 @@ export class Post {
     const u = this.final.uniforms
     u.uTime.value = time
     u.uTransition.value = this.transition
+    u.uCutSide.value = this.cutSide
     u.uGlitch.value = c.glitch
     u.uAberration.value = c.aberration
     u.uGrain.value = c.grain
     u.uVignette.value = c.vignette
     u.uFlash.value = c.flash
+    u.uFrost.value = c.frost
     u.uFade.value = this.fade
     this.composer.render(dt)
   }
