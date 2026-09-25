@@ -69,6 +69,8 @@ export function renderFallback(root: HTMLElement) {
   for (const id of CHAPTER_COPY_IDS) if (!order.includes(id)) order.push(id)
   order.forEach((id, i) => {
     const copy = buildChapterCopy(id, true)
+    // heading Tab stops only drive the live story
+    copy?.querySelectorAll('h1[tabindex], h2[tabindex]').forEach(h => h.removeAttribute('tabindex'))
     if (!copy) return
     // item "stops" only steer the live story; here they're just headings
     copy.querySelectorAll<HTMLAnchorElement>('a[data-anchor][href^="#"]:not([data-land])').forEach(a => {
