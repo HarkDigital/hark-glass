@@ -526,15 +526,15 @@ a {
 }
 .rise.is-in .rise-w > span {
   opacity: 1;
-  filter: blur(0);
+  filter: none;
   transform: none;
 }
 .rise:not(.is-in) .rise-w > span {
   transition-duration: 0.3s, 0.3s, 0.25s;
   transition-delay: 0s;
 }
-/* keep the gradient <em> painting per word */
-.rise em .rise-w > span,
+/* keep the gradient <em> painting per word — on the inner <em>, never on the
+   element that animates filter/transform (WebKit can drop clipped text there) */
 .rise .rise-w > span > em {
   background: var(--accent-grad);
   -webkit-background-clip: text;
