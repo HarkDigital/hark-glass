@@ -1,18 +1,20 @@
 import * as THREE from 'three'
-import { G, caustic, edgeGlow, glass, pane } from '../../kit/glass'
+import { G, caustic, edgeGlow, glass, pane, sharpTransmission } from '../../kit/glass'
 import { placeholderTexture } from '../../kit/images'
 import { toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js'
 import { logoParts } from '../../logo/logo'
 import type { WorkItem } from '../../content'
-import { MONO, SANS, spaced, textPlate, type TextPlate } from './text'
+import { MONO, spaced, textPlate, type TextPlate } from './text'
 
 /*
  * The Vitrine set: six thick glass display blocks standing on a gentle arc of
  * dark polished plinth, each with its project's screenshot embedded just
  * inside the front face (legible, refracted when the block turns), an etched
- * plaque and a small emerald status inlay; soft caustic pools under each.
- * At the end of the plinth, a stack of nine thin frosted index cards (the
- * rest of the portfolio) that fans open in depth.
+ * plaque and a small status inlay (emerald = live, amber = preview); soft
+ * caustic pools under each. At the end of the plinth, a file of nine frosted
+ * glass cards (the rest of the portfolio) that fans open in depth; the card
+ * for the current row rises out of the file with its site's screenshot on
+ * its face. The cards carry no names: the list beside them does.
  *
  * Geometry: the arc is a circle of radius R around C = (0, 0, R), so the
  * blocks curve gently toward the viewer at the ends and all face C.
@@ -57,11 +59,28 @@ const P_B = STACK_THETA + 0.2
 const P_THICK = 0.035
 const P_BEVEL = 0.018
 
-/* index cards */
-export const CW = 1.56
-export const CH = 0.62
+/* index cards: frosted glass, a 16:10 screenshot on the face, a plaque below */
+export const CW = 1.44
+export const CH = 0.98
+const C_DEPTH = 0.022
+const C_BEVEL = 0.012
+const C_FRONT = C_DEPTH / 2 + C_BEVEL
+const SW = 1.32
+const SH = SW * 0.625
+const C_TOP = 0.06
+const SHOT_CY = CH / 2 - C_TOP - SH / 2
+const C_PLAQUE_Y = (-CH / 2 + C_BEVEL + (SHOT_CY - SH / 2)) / 2
 
 export const ACCENTS = ['#29d9d0', '#8a7dff', '#4f8bff', '#9dffd0', '#ff6fa6', '#00ff85']
+
+/** City Line Capital (harktest.com) is a pre-launch build: never signal it as live. */
+export const isPreview = (url: string) => {
+  try {
+    return /(^|\.)harktest\.com$/i.test(new URL(url).hostname)
+  } catch {
+    return false
+  }
+}
 
 export interface Block {
   station: THREE.Group
@@ -72,6 +91,8 @@ export interface Block {
   shotMat: THREE.MeshBasicMaterial
   plaque: TextPlate
   gemMat: THREE.MeshBasicMaterial
+  /** the inlay's base colour: emerald for a live site, amber for a preview */
+  gemColor: THREE.Color
   /** fresnel rim: the edge-lit acrylic glow along bevels and sides */
   rimMat: THREE.ShaderMaterial
   pool: THREE.Mesh
@@ -79,10 +100,16 @@ export interface Block {
 }
 
 export interface Card {
+  /** the card's slot in the file (position + lean set per frame) */
   root: THREE.Group
+  /** slides along the card's own up axis: the pull out of the file */
+  lift: THREE.Group
   glass: THREE.Mesh
   mat: THREE.MeshPhysicalMaterial
-  name: TextPlate
+  /** the site's screenshot on the face (transparent: hidden, not blurred, behind other cards) */
+  shot: THREE.Mesh
+  shotMat: THREE.MeshBasicMaterial
+  plaque: TextPlate
 }
 
 export interface Gallery {
@@ -182,22 +209,6 @@ class ArcCurve extends THREE.Curve<THREE.Vector3> {
 
 const pad = (n: number) => String(n).padStart(2, '0')
 
-/**
- * three samples the transmission buffer through a bicubic mip blur even at
- * roughness 0 (its roughness floor is 0.0525), which softens a screenshot
- * seen through the glass. For the display blocks, sample the base level.
- */
-const LOD_RE = /float lod = log2\( transmissionSamplerSize\.x \) \* applyIorToRoughness\( roughness, ior \);\s*return textureBicubic\( transmissionSamplerMap, fragCoord\.xy, lod \);/
-function sharpTransmission(m: THREE.MeshPhysicalMaterial) {
-  const chunk = THREE.ShaderChunk.transmission_pars_fragment
-  if (!LOD_RE.test(chunk)) return
-  const sharp = chunk.replace(LOD_RE, 'return textureLod( transmissionSamplerMap, fragCoord.xy, 0.0 );')
-  m.onBeforeCompile = shader => {
-    shader.fragmentShader = shader.fragmentShader.replace('#include <transmission_pars_fragment>', sharp)
-  }
-  m.customProgramCacheKey = () => 'wk-sharp-transmission'
-}
-
 export function buildGallery(featured: WorkItem[], rest: WorkItem[], mobile: boolean): Gallery {
   const root = new THREE.Group()
   root.name = 'vitrine'
@@ -256,20 +267,29 @@ export function buildGallery(featured: WorkItem[], rest: WorkItem[], mobile: boo
     shot.position.set(0, IMG_Y, shotZ)
     pivot.add(shot)
 
-    // etched plaque in the bottom margin: number + name
+    // etched plaque in the bottom margin: number + name (+ an amber PREVIEW for a pre-launch build)
+    const pre = isPreview(w.url)
     const plaque = textPlate(1400, 84, 1.3, (c, pw, ph) => {
       c.font = `500 34px ${MONO}`
       c.globalAlpha = 0.62
       const x = 2 + spaced(c, pad(k + 1), 2, ph / 2, 3)
       c.globalAlpha = 0.95
-      spaced(c, w.name.toUpperCase(), x + 40, ph / 2, 5)
+      const nx = x + 40
+      const nw = spaced(c, w.name.toUpperCase(), nx, ph / 2, 5)
+      if (pre) {
+        c.fillStyle = G.amber
+        c.globalAlpha = 0.9
+        spaced(c, '· PREVIEW', nx + nw + 26, ph / 2, 5)
+      }
       void pw
     })
     plaque.mesh.position.set(-0.035, PLAQUE_Y, FRONT + 0.0025)
     pivot.add(plaque.mesh)
 
-    // the emerald status inlay (opaque, inside the glass: seen refracted, blooms)
-    const gemMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(G.signal), toneMapped: false })
+    // the status inlay (opaque, inside the glass: seen refracted, blooms):
+    // emerald for a live site, amber for a pre-launch preview
+    const gemColor = new THREE.Color(pre ? G.amber : G.signal)
+    const gemMat = new THREE.MeshBasicMaterial({ color: gemColor.clone(), toneMapped: false })
     const gem = new THREE.Mesh(gemGeo, gemMat)
     gem.position.set(IW / 2 - 0.035, plaque.mesh.position.y, mobile ? FRONT + 0.003 : -0.01)
     pivot.add(gem)
@@ -281,7 +301,7 @@ export function buildGallery(featured: WorkItem[], rest: WorkItem[], mobile: boo
     station.add(pool)
 
     root.add(station)
-    return { station, pivot, glass: g, glassMat, shot, shotMat, plaque, gemMat, rimMat, pool, poolMat: pool.material as THREE.ShaderMaterial }
+    return { station, pivot, glass: g, glassMat, shot, shotMat, plaque, gemMat, gemColor, rimMat, pool, poolMat: pool.material as THREE.ShaderMaterial }
   })
 
   // ---------------------------------------------------------------- stack
@@ -289,34 +309,44 @@ export function buildGallery(featured: WorkItem[], rest: WorkItem[], mobile: boo
   onArc(STACK_THETA, R, stack.position)
   stack.rotation.y = -STACK_THETA
   root.add(stack)
-  const cardGeo = pane(CW - 0.02, CH - 0.02, { depth: 0.022, bevel: 0.012, radius: 0.055 }).geometry
+  const cardGeo = pane(CW - 0.02, CH - 0.02, { depth: C_DEPTH, bevel: C_BEVEL, radius: 0.055 }).geometry
   const cardGlass = glass({ frost: 0.3, thickness: 0.12, dispersion: 0, env: 1.05, coat: 0.3 })
+  const cardShotGeo = roundedPlane(SW, SH, 0.014)
   const cards: Card[] = rest.map((w, j) => {
     const root = new THREE.Group()
+    const lift = new THREE.Group()
+    root.add(lift)
     const mat = cardGlass.clone()
     const g = new THREE.Mesh(cardGeo, mat)
-    root.add(g)
-    const name = textPlate(2048, 150, CW - 0.12, (c, pw, ph) => {
-      c.font = `500 44px ${MONO}`
-      c.globalAlpha = 0.66
-      const x = spaced(c, pad(featured.length + j + 1), 4, ph / 2 + 2, 2)
-      c.globalAlpha = 1
-      c.font = `520 74px ${SANS}`
-      const nx = x + 46
-      const nw = spaced(c, w.name, nx, ph / 2 + 2, -1.2)
-      // the industry, right-aligned in mono caps (only when it clears the name)
-      c.font = `500 34px ${MONO}`
-      const ind = w.industry.toUpperCase()
-      const iw = spaced(c, ind, 0, 0, 5, true)
-      if (nx + nw + 80 < pw - 8 - iw) {
-        c.globalAlpha = 0.55
-        spaced(c, ind, pw - 8 - iw, ph / 2 + 2, 5)
-      }
+    lift.add(g)
+    // the screenshot sits ON the face (in front of the frost, never behind
+    // it); it only shows while the card is out of the file
+    const shotMat = new THREE.MeshBasicMaterial({
+      map: placeholderTexture('#141a24'),
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      toneMapped: true,
     })
-    name.mesh.position.set(0, CH / 2 - 0.075, 0.011 + 0.012 + 0.002)
-    root.add(name.mesh)
+    shotMat.color.setScalar(0.86)
+    const shot = new THREE.Mesh(cardShotGeo, shotMat)
+    shot.position.set(0, SHOT_CY, C_FRONT + 0.002)
+    shot.visible = false
+    lift.add(shot)
+    // plaque in the bottom margin, like the display blocks: number + name
+    const plaque = textPlate(1600, 72, SW, (c, pw, ph) => {
+      c.font = `500 42px ${MONO}`
+      c.globalAlpha = 0.62
+      const x = 2 + spaced(c, pad(featured.length + j + 1), 2, ph / 2, 3)
+      c.globalAlpha = 0.95
+      spaced(c, w.name.toUpperCase(), x + 44, ph / 2, 6)
+      void pw
+    }, { opacity: 0 })
+    plaque.mesh.position.set(0, C_PLAQUE_Y, C_FRONT + 0.0025)
+    plaque.mesh.visible = false
+    lift.add(plaque.mesh)
     stack.add(root)
-    return { root, glass: g, mat, name }
+    return { root, lift, glass: g, mat, shot, shotMat, plaque }
   })
   const stackPool = caustic({ size: 1, color: '#8a7dff', strength: 0.35 })
   stackPool.scale.set(2.3, 0.74, 1)

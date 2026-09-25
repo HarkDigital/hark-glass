@@ -66,6 +66,22 @@
 .stage-work .wk-dock--list {
   width: min(470px, 38vw);
 }
+/* landscape: the list can never leave the safe band (the row track is the
+   dock's full height, so the panel's max-height resolves against it) */
+@media (min-aspect-ratio: 10/9) {
+  .stage-work .wk-dock--list {
+    grid-template-rows: minmax(0, 1fr);
+    align-content: stretch;
+  }
+  .stage-work .wk-dock--list .wk-list {
+    max-height: 100%;
+    overflow: auto;
+    scrollbar-width: none;
+  }
+  .stage-work .wk-dock--list .wk-list::-webkit-scrollbar {
+    display: none;
+  }
+}
 
 .stage-work .wk-meta {
   display: flex;
@@ -338,6 +354,37 @@
   }
 }
 
+/* ---------------- short landscape desktops (1366x657, 1280x600…) ---------------- */
+
+@media (min-aspect-ratio: 10/9) and (max-height: 700px) {
+  .stage-work .wk-card {
+    gap: 11px;
+    padding: 20px 24px 18px;
+  }
+  .stage-work .wk-name {
+    font-size: clamp(1.8rem, 2.8vw, 2.6rem);
+  }
+  .stage-work .wk-list {
+    gap: 10px;
+    padding: 18px 22px 16px;
+  }
+  .stage-work .wk-list-title {
+    font-size: 2rem;
+  }
+  .stage-work .wk-row {
+    padding: 4px 10px;
+  }
+  .stage-work .wk-rname {
+    font-size: 14px;
+  }
+  .stage-work .wk-list .wk-cta {
+    margin-top: 2px;
+  }
+  .stage-work .wk-list .hud-btn {
+    padding: 11px 20px;
+  }
+}
+
 /* ---------------- short landscape phones ---------------- */
 
 @media (orientation: landscape) and (max-height: 500px) {
@@ -351,7 +398,7 @@
     width: min(360px, 44vw);
   }
   .stage-work .wk-dock--list {
-    width: min(480px, 56vw);
+    width: min(520px, 60vw);
   }
   .stage-work .wk-card {
     gap: 7px;
@@ -397,9 +444,12 @@
   }
   .stage-work .wk-rname {
     font-size: 12.5px;
-    white-space: nowrap;
+    line-height: 1.25;
+    /* a long name wraps to a second line rather than losing its end */
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
     overflow: hidden;
-    text-overflow: ellipsis;
   }
   .stage-work .wk-list .hud-btn {
     padding: 8px 16px;

@@ -17,9 +17,13 @@ import { G, edgeGlow, emerald, glass, glassLogo, smoothExtrude, type GlassLogo }
  * Transmission rules followed here: the core, the backdrop and the pools are
  * all OPAQUE (the pools/backdrop additive), so three's transmission pass
  * captures them and every piece of glass refracts them. The loops are
- * double-sided, so the back faces of each loop land in the transmission
- * buffer too — the front loop keeps seeing the back one through itself in
- * the exploded view instead of punching a hole.
+ * single-sided glass (a double-sided transmissive mesh makes three re-render
+ * its back faces, re-resolve and re-mip the glass buffer every frame, and
+ * Android skips that pass anyway). Instead each loop carries an "inner wall":
+ * its own geometry drawn back-face-only as an additive, opaque-list sheen of
+ * the studio. It reaches the glass buffer through the ordinary opaque pass,
+ * so a loop still shows its far wall — and the front loop still shows the
+ * back one in the exploded view — while the glass stays clear.
  */
 
 /** mark height in world units */
@@ -39,6 +43,8 @@ export interface Satellite {
   bob: number
   /** resting orientation (idle spin is added from time) */
   rot: THREE.Euler
+  /** bounding radius (world units) */
+  radius: number
 }
 
 export interface HeroSet {
@@ -49,7 +55,7 @@ export interface HeroSet {
   centres: { loopA: THREE.Vector3; loopB: THREE.Vector3; core: THREE.Vector3 }
   /** things that follow the camera's orbit (with lag): backdrop + satellites */
   rig: THREE.Group
-  backdrop: THREE.Mesh
+  backdrop: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>
   plinth: THREE.Mesh
   poolUnder: THREE.Mesh
   poolTop: THREE.Mesh
@@ -66,9 +72,27 @@ export interface HeroSet {
 /** the loops: crystal glass, faintly green where it's thick, sharp clearcoat */
 function loopMaterial(mobile: boolean): THREE.MeshPhysicalMaterial {
   const m = glass({ thickness: 0.42, ior: 1.52, dispersion: 0.6, env: 1.5, coat: 1, tint: '#e2fff2', tintDistance: 2.6 }).clone()
-  m.side = THREE.DoubleSide
+  m.side = THREE.FrontSide
   m.dispersion = mobile ? 0 : 0.6
   return m
+}
+
+/**
+ * The loops' far wall: back faces only, black base + clear specular, added
+ * on top of whatever is behind (so the glass never goes dark). Opaque list,
+ * so three's transmission pass renders it into the glass buffer with the
+ * rest of the opaque scene: one cheap draw per loop, no extra resolve.
+ */
+function innerWallMaterial(): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({
+    color: 0x000000,
+    roughness: 0.12,
+    metalness: 0,
+    side: THREE.BackSide,
+    transparent: false,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
 }
 
 /**
@@ -135,22 +159,38 @@ function etchedWord(word: string): { texture: THREE.CanvasTexture; aspect: numbe
   const draw = () => {
     g.setTransform(1, 0, 0, 1, 0, 0)
     g.globalCompositeOperation = 'source-over'
-    g.fillStyle = '#000'
-    g.fillRect(0, 0, cv.width, cv.height)
+    g.clearRect(0, 0, cv.width, cv.height)
     g.font = font
     g.textBaseline = 'alphabetic'
+    g.lineJoin = 'round'
+    g.lineCap = 'round'
     const total = measure()
-    let x = (cv.width - total) / 2
     const y = h * 0.86
-    for (const ch of word) {
-      // a faint frosted fill, then the etched hairline edge
-      g.fillStyle = 'rgba(255,255,255,0.11)'
-      g.fillText(ch, x, y)
-      g.lineWidth = 3.6
-      g.strokeStyle = 'rgba(255,255,255,0.95)'
-      g.strokeText(ch, x, y)
-      x += g.measureText(ch).width + track
+    const each = (paint: (ch: string, x: number) => void) => {
+      let x = (cv.width - total) / 2
+      for (const ch of word) {
+        paint(ch, x)
+        x += g.measureText(ch).width + track
+      }
     }
+    // the etched hairline: a double-width outline with each glyph's body
+    // punched out, so only the OUTER half survives. The variable font keeps
+    // overlapping contours (the H crossbar, the R's leg); erasing the filled
+    // union removes their inner edges, and round joins leave no miter spikes.
+    g.lineWidth = 3.6 * 2
+    g.strokeStyle = 'rgba(255,255,255,0.95)'
+    each((ch, x) => g.strokeText(ch, x, y))
+    g.globalCompositeOperation = 'destination-out'
+    g.fillStyle = '#fff'
+    each((ch, x) => g.fillText(ch, x, y))
+    // a faint frosted fill inside the line
+    g.globalCompositeOperation = 'source-over'
+    g.fillStyle = 'rgba(255,255,255,0.11)'
+    each((ch, x) => g.fillText(ch, x, y))
+    // black behind (additive: black adds nothing)
+    g.globalCompositeOperation = 'destination-over'
+    g.fillStyle = '#000'
+    g.fillRect(0, 0, cv.width, cv.height)
     // lit from above: the etch fades toward its foot
     g.globalCompositeOperation = 'multiply'
     const grad = g.createLinearGradient(0, 0, 0, h)
@@ -215,11 +255,16 @@ export function buildMark(mobile: boolean): Pick<HeroSet, 'pivot' | 'logo' | 'ce
       )
   }
   coreMat.customProgramCacheKey = () => 'hark-hero-core'
-  logo.glow.intensity = 1.6
+  logo.glow.intensity = 0.7
   logo.glow.distance = 3.2
-  // a whisper of fresnel light on the loops' grazing edges (drawn after the glass)
+  // a whisper of fresnel light on the loops' grazing edges (drawn after the glass),
+  // and each loop's far wall (seen through its own glass and the other loop's)
   const rimMat = edgeGlow('#e6fff3', 3, 0.42)
+  const wallMat = innerWallMaterial()
   for (const loop of [logo.loopA, logo.loopB]) {
+    const wall = new THREE.Mesh(loop.geometry, wallMat)
+    wall.renderOrder = -1
+    loop.add(wall)
     const rim = new THREE.Mesh(loop.geometry, rimMat)
     rim.renderOrder = 3
     loop.add(rim)
@@ -246,7 +291,8 @@ export function buildStage(mobile: boolean): Omit<HeroSet, 'pivot' | 'logo' | 'c
 
   // ---- light pool beneath the puck (opaque + additive: the puck refracts it)
   const poolSize = PLINTH_R * 3.2
-  const poolUnder = lightPool({ size: poolSize, color: '#4dffb0', strength: 0.4, ring: 0.7, ringR: (PLINTH_R * 0.97) / (poolSize / 2), opaque: true })
+  // a cool mint light table, not a neon ring: the emerald stays the core's accent
+  const poolUnder = lightPool({ size: poolSize, color: '#8ff0cc', strength: 0.4, ring: 0.5, ringR: (PLINTH_R * 0.97) / (poolSize / 2), opaque: true })
   poolUnder.position.y = PLINTH_TOP - PLINTH_T - 0.16
   poolUnder.renderOrder = -4
   // ---- the emerald's bounce on the puck's top face (drawn after the glass)
@@ -280,7 +326,9 @@ export function buildStage(mobile: boolean): Omit<HeroSet, 'pivot' | 'logo' | 'c
     mesh.position.set(...base)
     rig.add(mesh)
     satMats.push(mat)
-    sats.push({ mesh, base: new THREE.Vector3(...base), spin: new THREE.Vector3(...spin), phase, bob, rot: mesh.rotation })
+    geo.computeBoundingSphere()
+    const radius = geo.boundingSphere?.radius ?? 0.4
+    sats.push({ mesh, base: new THREE.Vector3(...base), spin: new THREE.Vector3(...spin), phase, bob, rot: mesh.rotation, radius })
     return mesh
   }
   const seg = mobile ? 48 : 72

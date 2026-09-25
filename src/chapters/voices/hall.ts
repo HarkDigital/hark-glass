@@ -17,8 +17,9 @@ import { TESTIMONIALS } from '../../content'
  *  - FLOOR: additive light only (no surface of its own, so it melts into the
  *    studio): a bright slot of light at each pane's foot and a warm pool
  *    spilling forward through the glass.
- *  - QUOTE MARK: a thick “ in glass, drawn as two “6” commas and extruded
- *    with a deep round bevel so each reads as an inflated, polished pebble.
+ *  - QUOTE MARK: a thick opening “ in smoked glass: two leaned commas (solid
+ *    round head, tail hooking up to a fine point), a slab with a small round
+ *    bevel so the silhouette keeps the glyph's taper.
  */
 
 export const N = TESTIMONIALS.length
@@ -307,35 +308,47 @@ export function makeFloor(): Floor {
 
 /* ------------------------------------------------------------ quote mark */
 
-/** A thin “6” comma outline (ball radius r, tail thinning to a blunt tip). */
-function commaShape(ox: number, r: number): THREE.Shape {
+/**
+ * One mark of an opening “, head down, in head radii (head centre at the
+ * origin): a solid round head (~55% of the height) whose tail springs from its
+ * left side, rises and hooks right to a fine point. Drawn thin at the tip —
+ * the bevel adds its radius all round.
+ */
+function quoteComma(): THREE.Shape {
   const s = new THREE.Shape()
-  const join = THREE.MathUtils.degToRad(96)
-  s.moveTo(ox - r, 0)
-  s.bezierCurveTo(ox - r * 1.04, r * 1.3, ox - r * 0.6, r * 2.2, ox + r * 0.86, r * 2.5)
-  s.quadraticCurveTo(ox + r * 1.12, r * 2.54, ox + r * 0.96, r * 2.36)
-  s.bezierCurveTo(ox + r * 0.02, r * 1.92, ox - r * 0.34, r * 1.36, ox + r * Math.cos(join), r * Math.sin(join))
-  s.absarc(ox, 0, r, join, -Math.PI, true)
+  const join = THREE.MathUtils.degToRad(102)
+  s.moveTo(-1, 0)
+  // outer edge of the tail: up the head's left side, arcing over to the tip
+  s.bezierCurveTo(-1.02, 1.3, -0.72, 2.32, 0.46, 2.64)
+  // inner edge: back down into the notch on the head's crown
+  s.bezierCurveTo(-0.02, 2.34, -0.3, 1.66, Math.cos(join), Math.sin(join))
+  // the head: round over the right, under, and up to the start
+  s.absarc(0, 0, 1, join, -Math.PI, true)
   return s
 }
 
+/** italic lean of the mark (11°) */
+const LEAN = Math.tan(THREE.MathUtils.degToRad(11))
+/** head centres apart, in head radii: the pair nearly touching reads as one “ */
+const PAIR = 2.4
+
 /**
- * One comma of the glass “, extruded with a deep round bevel so the flat face
- * is small and the body is inflated like a polished pebble — continuous
- * curvature, so highlights run clean and the whole piece acts as a lens.
+ * One comma of the glass “: a thick slab with a small round bevel, so the
+ * silhouette keeps the glyph's taper and the flat faces stay clean. Leaned,
+ * then given smooth (creased) normals.
  */
-function inflatedComma(ox: number, mobile: boolean): THREE.BufferGeometry {
-  const bevel = 0.13
-  const g = new THREE.ExtrudeGeometry(commaShape(ox, 0.2), {
-    depth: 0.12,
+function glassComma(ox: number, mobile: boolean): THREE.BufferGeometry {
+  const g = new THREE.ExtrudeGeometry(quoteComma(), {
+    depth: 0.55,
     bevelEnabled: true,
-    bevelThickness: bevel,
-    bevelSize: bevel * 0.92,
-    bevelSegments: mobile ? 6 : 12,
-    curveSegments: mobile ? 32 : 72,
+    bevelThickness: 0.1,
+    bevelSize: 0.07,
+    bevelSegments: mobile ? 9 : 12,
+    curveSegments: mobile ? 56 : 72,
     steps: 1,
   })
-  g.translate(0, 0, -0.06)
+  g.translate(ox, 0, -0.275)
+  g.applyMatrix4(new THREE.Matrix4().makeShear(0, 0, LEAN, 0, 0, 0))
   const out = toCreasedNormals(g, Math.PI / 3)
   g.dispose()
   return out
@@ -348,10 +361,10 @@ export interface QuoteMark {
   right: THREE.Mesh
 }
 
-/** The glass “: two inflated commas, centred on the root, 1 unit tall. */
+/** The glass “: two leaned commas, centred on the root, 1 unit tall. */
 export function makeQuoteMark(mobile: boolean): QuoteMark {
-  const ga = inflatedComma(-0.39, mobile)
-  const gb = inflatedComma(0.39, mobile)
+  const ga = glassComma(-PAIR / 2, mobile)
+  const gb = glassComma(PAIR / 2, mobile)
   const box = new THREE.Box3()
   ga.computeBoundingBox()
   gb.computeBoundingBox()
@@ -363,7 +376,8 @@ export function makeQuoteMark(mobile: boolean): QuoteMark {
     g.scale(k, k, k)
     g.computeBoundingSphere()
   }
-  const mat = glass({ thickness: 1.1, ior: 1.5, dispersion: 0.75, env: 1.35, tint: '#fff1e2', tintDistance: 4 })
+  // a warm smoke: dense enough that the heads read solid, never milky
+  const mat = glass({ thickness: 0.9, ior: 1.5, dispersion: 0.6, env: 1.35, tint: '#d4bfc6', tintDistance: 1.3 })
   const left = new THREE.Mesh(ga, mat)
   const right = new THREE.Mesh(gb, mat)
   const root = new THREE.Group()

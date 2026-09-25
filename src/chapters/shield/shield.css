@@ -130,6 +130,15 @@
   stroke: #ffc2b8;
 }
 
+/* lowfx (phones, or scaled-down rendering): no backdrop blur, a denser fill */
+.lowfx .stage-shield .sh-status .callout-label {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 55%),
+    rgba(12, 15, 22, 0.88);
+}
+
 /* measures the shared layout tokens for the camera framing */
 .stage-shield .sh-probe {
   position: absolute;

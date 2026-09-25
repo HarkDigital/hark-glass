@@ -46,8 +46,12 @@ export interface HudLayout {
 const ICON_MAIL =
   '<svg class="ct-ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="5.5" width="18" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m4.8 7.6 7.2 5.3 7.2-5.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>'
 
-/** Portrait layout (card along the bottom). Keep in sync with contact.css. */
-export const PORTRAIT_QUERY = '(max-width: 767px), (max-aspect-ratio: 9/10)'
+/**
+ * Portrait layout (card along the bottom). Short landscape phones keep the
+ * side-by-side layout (their compact card is in contact.css). Keep in sync
+ * with contact.css.
+ */
+export const PORTRAIT_QUERY = '(max-width: 767px) and (orientation: portrait), (max-width: 767px) and (min-height: 501px), (max-aspect-ratio: 9/10)'
 
 /** Copy text: async Clipboard API first, then a hidden-textarea fallback. */
 export async function copyText(text: string) {

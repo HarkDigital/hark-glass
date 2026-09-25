@@ -3,7 +3,6 @@ import type { Chapter, ChapterContext } from '../../core/types'
 import { reveal, setRise } from '../../core/dom'
 import { clamp, damp, ease, lerp, smoothstep } from '../../core/math'
 import { nextFrame } from '../../core/yield'
-import { G } from '../../kit/glass'
 import { buildHud, measureHud, type Hud, type HudLayout } from './hud'
 import { buildScene, type LensScene } from './scene'
 import './contact.css'
@@ -16,8 +15,8 @@ import './contact.css'
  * in front of it and — like a real ball lens — shows the mark FLIPPED and
  * magnified as it passes (the landing, 0.30, is that moment). Then the lens
  * glides on and back into depth to rest beside the mark, the mark turns
- * front-on, one last light sweep runs across the glass and settles into a
- * held glint, and everything is still.
+ * front-on, one last gentle light sweep slides the studio strips along its
+ * outer bevels, and everything is still: the round mark, clear, front-on.
  *
  *   0.00–0.06  calm in-beat under the passing frosted pane: mark at 3/4, lens low
  *   0.05–0.17  focus pull (frost clears) — "Clear"; the card comes into focus
@@ -58,6 +57,14 @@ const PATH_PORTRAIT: [number, number, number][] = [
 ]
 /** the mark sits this far (mark heights) left of the art centre, leaving the lens room to rest */
 const MARK_SHIFT = 0.3
+/** the backlight strip's x behind the mark, in mark heights from its centre */
+const STRIP_X = 0.2
+/**
+ * Where the studio rests for the final still (and the whole chapter under
+ * reduced motion): the strips lie along the loops' outer bevels, so the mark
+ * reads round and front-on. Clean from about -0.3 to 0.85.
+ */
+const TURN_END = 0.72
 
 export default function create(): Chapter {
   const group = new THREE.Group()
@@ -152,7 +159,7 @@ export default function create(): Chapter {
       hoverAmt = damp(hoverAmt, hud.hover ? 1 : 0, 5, frame.dt)
       const since = (performance.now() - hud.copiedAt) / 1000
       const copied = since >= 0 && since < 1.6 ? Math.sin((since / 1.6) * Math.PI) : 0
-      set.mark.glow.intensity = 0.9 + 0.7 * settle + 0.8 * hoverAmt + (rm ? 0.4 : 1) * 1.2 * copied
+      set.mark.glow.intensity = 0.9 + 0.4 * settle + 0.8 * hoverAmt + (rm ? 0.4 : 1) * 1.2 * copied
 
       // ---- the lens: rises across, holds over the mark, drifts on and recedes to rest
       const u =
@@ -176,29 +183,34 @@ export default function create(): Chapter {
       set.ringU.uPhase.value = (rm ? 0 : t * 0.035 * (1 - settle)) + 1.4 * ease.inOutCubic(smoothstep(0.72, 0.9, local))
       set.ringU.uStrength.value = 0.85 + 0.35 * smoothstep(0.74, 0.86, local) - 0.35 * smoothstep(0.9, 1, local)
 
-      // ---- the world: calm mint/signal light, one soft strip behind the mark
+      // ---- the world: a clear graphite studio, cool ice/aqua pools, one short soft
+      // strip behind the mark. Emerald stays the accent: the mark's core, not the room.
       const wp = ctx.world.params
       const aspect = W / H
       const mx = ((cx / W) * 2 - 1) * aspect
       const my = 1 - (cy / H) * 2
       const unitField = (unitPx / H) * 2
       const spread = 1.6
-      wp.a = '#00b068'
-      wp.b = '#46c79d'
-      wp.c = '#0f4a66'
-      wp.d = G.iris
-      wp.base = '#03060a'
-      wp.glow = 0.27 + 0.04 * settle
+      wp.a = '#62707a'
+      wp.b = '#c8d2dc'
+      wp.c = '#48506a'
+      wp.d = '#5a5690'
+      wp.base = '#0a0b0e'
+      wp.glow = 0.44 + 0.04 * settle
       wp.flow = rm ? 0.2 : lerp(0.7, 0.3, settle)
       wp.spread = spread
-      // strip 1 (the strongest, at focus − 0.34·spread) sits just behind the mark's right loop
-      wp.focus.set(mx + unitField * 0.2 + 0.34 * spread, my + unitField * 0.08)
+      // only strip 1 (at focus − 0.34·spread): short, just behind the mark's right loop,
+      // clear of the core, the card and the top chrome (its height follows the mark's size)
+      wp.focus.set(mx + unitField * STRIP_X + 0.34 * spread, my + unitField * 0.08)
       wp.strips = 0.58
-      wp.stripColor = '#e3fff2'
+      wp.stripMask.set(1, 0, 0)
+      wp.stripHeight = clamp(0.3 * unitField, 0.1, 0.22)
+      wp.stripColor = '#eef5ff'
       wp.env = 1.3
-      // light sweeps: one as the lens arrives, one last one across the finished still
-      // (the sweep ends on the studio strip lying along the mark's left bevels: a held glint)
-      wp.envTurn = rm ? 1.36 : -0.55 + 0.95 * smoothstep(0.12, 0.34, local) + 0.96 * smoothstep(0.73, 0.87, local)
+      // light sweeps: one as the lens arrives, one last, gentle one across the finished
+      // still. Both stay where the studio strips lie only along the outer bevels: past
+      // ~0.9 a strip faces the camera and floods the flat front faces into chevrons.
+      wp.envTurn = rm ? TURN_END : -0.55 + 0.95 * smoothstep(0.12, 0.34, local) + (TURN_END - 0.4) * smoothstep(0.73, 0.87, local)
       wp.keyDir.set(-0.35, 0.72, 0.6)
       wp.key = 1.35
       wp.fill = 0.28
@@ -206,8 +218,9 @@ export default function create(): Chapter {
       // ---- post: the focus pull that gives the chapter its name
       const pp = ctx.post.params
       pp.frost = 0.34 * (1 - smoothstep(0.05, 0.17, local))
-      pp.bloomStrength = 0.5 + 0.1 * settle
-      pp.bloomRadius = 0.6
+      // a tight bloom: the core glows, it doesn't haze the whole studio green
+      pp.bloomStrength = 0.45 + 0.05 * settle
+      pp.bloomRadius = 0.4
       pp.vignette = 0.34
 
       // ---- copy

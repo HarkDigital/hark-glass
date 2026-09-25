@@ -21,14 +21,22 @@ import { bindScene, holdScene, releaseScene, sceneHeld } from './scene'
  *                 full-screen frosted sheet (a real modal dialog: focus trap,
  *                 Escape, inert background, focus returns to Menu)
  *   bottom-left   Sound: a glass pill with four level bars that follow the
- *                 actual audio while it plays (aria-pressed)
+ *                 actual audio while it plays (aria-pressed), and Motion: a
+ *                 glass ring with one lit bead (aria-pressed). Motion off
+ *                 sets html.motion-off, is remembered for the session
+ *                 (sessionStorage) and starts off under
+ *                 prefers-reduced-motion; the engine freezes the scene's idle
+ *                 animation while it is off. <= 560px it lives in the menu
+ *                 sheet, beside the sheet's Sound pill
  *   bottom-right  the readout "03 / 07 · Facets · Services" over seven glass
  *                 beads threaded on a thin glass rod; the current bead is lit
  *                 emerald and the rod fills with light as the story goes on
  *                 (each bead's stretch of rod is its chapter)
  *
- * Every text sits on a frosted fill dark enough for >= 4.5:1 over the
- * brightest light the world can put behind it. Short-landscape phones get a
+ * Every text sits on a smoked-glass fill dark enough for >= 4.5:1 over the
+ * brightest light the world can put behind it. The always-visible pills have
+ * no backdrop-filter (it would make the compositor wait on every WebGL
+ * frame); only the menu sheet and the loader frost for real (ui.css). Short-landscape phones get a
  * compact single-row version (ui.css).
  *
  * API used by main.ts: createChrome(root, engine, sound) → { update(frame, state) }.
@@ -47,6 +55,31 @@ const BUSINESS: Record<string, string> = {
 }
 const NAV = ['work', 'services', 'contact']
 const MENU_QUERY = '(max-width: 720px)'
+/** the Motion toggle's label (Sound's lives in MICROCOPY) */
+const MOTION_LABEL = 'Motion'
+const MOTION_KEY = 'hark-glass:motion'
+const readMotion = (fallback: boolean) => {
+  try {
+    const v = sessionStorage.getItem(MOTION_KEY)
+    if (v === '1') return true
+    if (v === '0') return false
+  } catch {
+    /* blocked storage: the default for this visit */
+  }
+  return fallback
+}
+const rememberMotion = (on: boolean) => {
+  try {
+    sessionStorage.setItem(MOTION_KEY, on ? '1' : '0')
+  } catch {
+    /* private mode / blocked storage: the choice lasts until reload */
+  }
+}
+/**
+ * The engine's idle-motion switch. Engine has no such field yet (requested
+ * from core); assigning it now means it takes effect the moment it lands.
+ */
+type MotionEngine = Engine & { motion?: boolean }
 const pad = (n: number) => String(n).padStart(2, '0')
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
 
@@ -90,7 +123,13 @@ export function createChrome(root: HTMLElement, engine: Engine, sound: Sound) {
     )
     .join('')
 
-  const soundInner = `<span class="ch-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="ch-sound-k">${MICROCOPY.audio}</span><span class="ch-sound-st" aria-hidden="true">${MICROCOPY.audioOff}</span>`
+  const soundInner = `<span class="ch-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="ch-tgl-k">${MICROCOPY.audio}</span><span class="ch-tgl-st" aria-hidden="true">${MICROCOPY.audioOff}</span>`
+  let motionOn = readMotion(!reduced)
+  const motionInner = `<span class="ch-orbit" aria-hidden="true"><i></i></span><span class="ch-tgl-k">${MOTION_LABEL}</span><span class="ch-tgl-st" aria-hidden="true">${motionOn ? MICROCOPY.audioOn : MICROCOPY.audioOff}</span>`
+  const soundBtn = (extra = '') =>
+    `<button class="ch-tgl ch-sound ch-glass${extra}" type="button" data-sound-toggle aria-pressed="false">${soundInner}</button>`
+  const motionBtn = (extra = '') =>
+    `<button class="ch-tgl ch-motion ch-glass${extra}" type="button" data-motion-toggle aria-pressed="${motionOn}">${motionInner}</button>`
 
   root.innerHTML = `
   <div class="chr">
@@ -108,7 +147,7 @@ export function createChrome(root: HTMLElement, engine: Engine, sound: Sound) {
     </header>
 
     <div class="ch-bottom">
-      <button class="ch-sound ch-glass" type="button" data-sound-toggle aria-pressed="false">${soundInner}</button>
+      <div class="ch-togs">${soundBtn()}${motionBtn()}</div>
       <div class="ch-prog ch-glass">
         <p class="ch-read" aria-hidden="true"><span class="ch-read-n"></span><span class="ch-read-l"></span><span class="ch-read-b"></span></p>
         <nav class="ch-pips" aria-label="Chapters">
@@ -130,7 +169,7 @@ export function createChrome(root: HTMLElement, engine: Engine, sound: Sound) {
         <nav class="ch-menu-nav" aria-label="Chapters"><ol class="ch-menu-list">${menuItems}</ol></nav>
         <div class="ch-menu-foot">
           <a class="hud-btn ch-menu-cta" href="#contact" data-go="contact">Start a project</a>
-          <button class="ch-sound ch-glass ch-menu-sound" type="button" data-sound-toggle aria-pressed="false">${soundInner}</button>
+          <div class="ch-menu-togs">${soundBtn(' ch-menu-sound')}${motionBtn(' ch-menu-motion')}</div>
         </div>
         <p class="ch-menu-mail"><a href="mailto:${BRAND.email}">${BRAND.email}</a></p>
       </div>
@@ -150,7 +189,8 @@ export function createChrome(root: HTMLElement, engine: Engine, sound: Sound) {
   const pipEls = [...root.querySelectorAll<HTMLButtonElement>('.ch-pip')]
   const menuLinks = [...root.querySelectorAll<HTMLAnchorElement>('.ch-ml')]
   const soundBtns = [...root.querySelectorAll<HTMLButtonElement>('[data-sound-toggle]')]
-  const bars = [...root.querySelectorAll<HTMLElement>('.ch-sound:not(.ch-menu-sound) .ch-bars i')]
+  const motionBtns = [...root.querySelectorAll<HTMLButtonElement>('[data-motion-toggle]')]
+  const bars = [...root.querySelectorAll<HTMLElement>('.ch-togs .ch-sound .ch-bars i')]
   const readN = $('.ch-read-n')
   const readL = $('.ch-read-l')
   const readB = $('.ch-read-b')
@@ -264,7 +304,7 @@ export function createChrome(root: HTMLElement, engine: Engine, sound: Sound) {
   const syncSound = (on: boolean) => {
     for (const b of soundBtns) {
       b.setAttribute('aria-pressed', String(on))
-      const st = b.querySelector('.ch-sound-st')
+      const st = b.querySelector('.ch-tgl-st')
       if (st) st.textContent = on ? MICROCOPY.audioOn : MICROCOPY.audioOff
     }
     chr.classList.toggle('is-sound', on)
@@ -273,6 +313,28 @@ export function createChrome(root: HTMLElement, engine: Engine, sound: Sound) {
   for (const b of soundBtns) b.addEventListener('click', () => sound.toggle())
   sound.onChange.push(syncSound)
   syncSound(sound.enabled)
+
+  // -------------------------------------------------------------------- motion
+
+  // Pause the background: html.motion-off (CSS and anything else can key off
+  // it), the engine's idle-motion switch, and a 'hark:motion' event
+  const syncMotion = () => {
+    document.documentElement.classList.toggle('motion-off', !motionOn)
+    ;(engine as MotionEngine).motion = motionOn
+    for (const b of motionBtns) {
+      b.setAttribute('aria-pressed', String(motionOn))
+      const st = b.querySelector('.ch-tgl-st')
+      if (st) st.textContent = motionOn ? MICROCOPY.audioOn : MICROCOPY.audioOff
+    }
+    window.dispatchEvent(new CustomEvent('hark:motion', { detail: { on: motionOn } }))
+  }
+  for (const b of motionBtns)
+    b.addEventListener('click', () => {
+      motionOn = !motionOn
+      rememberMotion(motionOn)
+      syncMotion()
+    })
+  syncMotion()
 
   // --------------------------------------------------------------- menu sheet
 
@@ -364,7 +426,7 @@ export function createChrome(root: HTMLElement, engine: Engine, sound: Sound) {
         const first = lastIndex < 0
         lastIndex = state.index
         if (cueIndex < 0) showReadout(state.index)
-        if (!first && !reduced) {
+        if (!first && !reduced && motionOn) {
           // a new chapter: a light sweep runs across the readout's glass and
           // the new name pulls into focus
           prog.classList.remove('is-sweep')
@@ -408,7 +470,7 @@ export function createChrome(root: HTMLElement, engine: Engine, sound: Sound) {
 
       // sound bars follow the real signal (a calm fixed shape under reduced motion)
       if (sound.enabled && bars.length) {
-        if (!reduced && sound.meter(lv)) {
+        if (!reduced && motionOn && sound.meter(lv)) {
           for (let i = 0; i < 4; i++) {
             const idle = 0.5 + 0.5 * Math.sin(frame.time * (1.1 + i * 0.37) + i * 1.7)
             const v = Math.min(1, 0.36 + shape[i] * 0.3 * idle + lv[i] * lv[i] * 0.6)

@@ -64,7 +64,12 @@ const feedFrom = (k: number) => (k === 0 ? 0.03 : A + S * (k - 1 + 0.2))
 const ANCHORS = [0, 1, 2, 3].map(k => A + S * (k + 0.55))
 const STATS_AT = 0.885
 const FAN = [0.745, 0.845] as const
-const CARD = [0.112, 0.785] as const
+/** a prism's engraving fades as the camera leaves it for the next one (the story has passed it) */
+const PASSED = [0, 1, 2, 3].map(k => [A + S * (k + 0.85), A + S * (k + 1.1)] as const)
+const WHITE = new THREE.Color(G.white)
+const MINT = new THREE.Color(G.mint)
+// the card arrives after the heading's rest (intro 0.12: the headline and the row of prisms alone)
+const CARD = [0.126, 0.785] as const
 const TILES = [0.83, 0.958] as const
 
 // 10 years, $1M+, 15 — in that order
@@ -88,6 +93,21 @@ const _f = new THREE.Vector3()
 const _r = new THREE.Vector3()
 const _u = new THREE.Vector3()
 const UP = new THREE.Vector3(0, 1, 0)
+const _c = new THREE.Vector3()
+
+/**
+ * The world's backlight strips (world.ts FIELD_FRAG): field-space offsets
+ * from the focus, as multiples of spread. The light field is also shifted by
+ * the camera heading (uShift.x = 0.35 sin(yaw)), so a strip lands on screen at
+ * focus.x + off * spread - shift.
+ */
+const STRIP_OFF = [-0.34, 0.18, 0.52] as const
+/** prism silhouette points (local): the triangle's corners at the front and back faces */
+const CORNERS: THREE.Vector3[] = []
+for (let j = 0; j < 3; j++) {
+  const a = Math.PI / 2 + (j * 2 * Math.PI) / 3
+  for (const z of [-1, 1]) CORNERS.push(new THREE.Vector3(Math.cos(a) * R, Math.sin(a) * R, z * (DEPTH / 2 + BEVEL)))
+}
 
 /**
  * A key orbiting `c`: azimuth phi (degrees, + = from the left-front),
@@ -195,9 +215,16 @@ export default function create(): Chapter {
   const rimMats: THREE.ShaderMaterial[] = []
   const prismMats: THREE.MeshPhysicalMaterial[] = []
   const glowMats: THREE.ShaderMaterial[] = []
-  const rims: THREE.Mesh[] = []
-  const inners: THREE.Mesh[] = []
-  const labels: { word: THREE.MeshBasicMaterial; num: THREE.MeshBasicMaterial }[] = []
+  const labels: {
+    word: THREE.MeshBasicMaterial
+    num: THREE.MeshBasicMaterial
+    wordMesh: THREE.Mesh
+    numMesh: THREE.Mesh
+    /** half the engraved word's width (local units) */
+    halfW: number
+    /** opacity from the story (update); camera() fades it further at the frame edge */
+    base: number
+  }[] = []
   const feeds: Beam[] = []
   let fan: Beam
   let washMesh: ReturnType<typeof wash>
@@ -213,7 +240,11 @@ export default function create(): Chapter {
   let statsEl: HTMLElement
   const tiles: HTMLElement[] = []
   let shown = -2
-  const fillCache: string[] = ['', '', '', '']
+  let tilesShown = false
+  const fillCache = [-1, -1, -1, -1]
+  // per-frame scratch (no allocations in update)
+  const act = [0, 0, 0, 0]
+  const lit = [0, 0, 0, 0]
 
   const tmpPos = new THREE.Vector3()
   const tmpTgt = new THREE.Vector3()
@@ -221,6 +252,10 @@ export default function create(): Chapter {
   const scratch = new THREE.PerspectiveCamera(40, 1, 0.1, 200)
   let keys: Key[] = []
   let keysAspect = -1
+  /** world spread this frame (set in update, read when placing the strips in camera) */
+  let spreadNow = 0.8
+  const stripX = [0, 0, 0]
+  const stripM = [1, 1, 1]
 
   return {
     id: 'process',
@@ -255,7 +290,6 @@ export default function create(): Chapter {
         rim.scale.setScalar(1.003)
         rim.renderOrder = 4
         p.add(rim)
-        rims.push(rim)
 
         // engraved on the face: the word in the wide part, the number in the narrow part
         const word = etch(PROCESS[i].title, { height: 0.175, weight: 520, color: G.white, glow: 1.6, opacity: 0.95, letterSpacing: -0.01 })
@@ -279,14 +313,20 @@ export default function create(): Chapter {
         word.renderOrder = 5
         num.renderOrder = 5
         p.add(word, num)
-        labels.push({ word: word.material as THREE.MeshBasicMaterial, num: num.material as THREE.MeshBasicMaterial })
+        labels.push({
+          word: word.material as THREE.MeshBasicMaterial,
+          num: num.material as THREE.MeshBasicMaterial,
+          wordMesh: word,
+          numMesh: num,
+          halfW: (word.geometry as THREE.PlaneGeometry).parameters.width / 2,
+          base: 0.95,
+        })
 
         // light scattering inside the glass while the beam runs through it
         const inner = innerGlow(0.9)
         inner.position.set(0, 0, 0)
         inner.renderOrder = 3
         p.add(inner)
-        inners.push(inner)
         glowMats.push(inner.material)
       }
       await nextFrame()
@@ -395,12 +435,14 @@ export default function create(): Chapter {
       const idx = clamp(Math.floor((local - A) / S), 0, 3)
       const phase = clamp((local - A - idx * S) / S)
       // how strongly each prism is the active one
-      const act = [0, 1, 2, 3].map(k => window01(local, A + S * k - 0.012, A + S * (k + 1) + 0.012, 0.045))
+      for (let k = 0; k < 4; k++) {
+        act[k] = window01(local, A + S * k - 0.012, A + S * (k + 1) + 0.012, 0.045)
+        // has the light reached prism k?
+        lit[k] = smoothstep(reachAt(k) - 0.025, reachAt(k) + 0.01, local)
+      }
       const results = smoothstep(0.77, 0.86, local)
       // the last prism stays lit: it is the source of the spectrum
       act[3] = Math.max(act[3], results * 0.75)
-      // has the light reached prism k?
-      const lit = [0, 1, 2, 3].map(k => smoothstep(reachAt(k) - 0.025, reachAt(k) + 0.01, local))
       const intro = 1 - smoothstep(0.09, 0.16, local)
 
       // ---- rig idle float (slow, weightless)
@@ -414,18 +456,30 @@ export default function create(): Chapter {
         const sway = rm ? 0 : Math.sin(t * 0.3 + k * 1.7) * 0.02
         p.rotation.y = lerp(0.06, -0.36, arrive) + sway
         const a = act[k]
-        prismMats[k].envMapIntensity = 1.2 + 0.5 * a
-        const rimS = 0.12 * lit[k] + 0.55 * a
+        const l = lit[k]
+        const m = prismMats[k]
+        m.envMapIntensity = 1.2 + 0.5 * a
+        // a waiting prism is thin, clear glass that shows the studio behind it;
+        // the optical body thickens and bends harder as the light reaches it
+        m.thickness = lerp(0.45, 1.25, l)
+        m.ior = lerp(1.45, 1.56, l)
+        // edges always catch a little light (a dark prism reads as glass, not a hole)
+        const rimS = lerp(0.15, 0.12, l) + 0.55 * a
         rimMats[k].uniforms.uStrength.value = rimS
-        rims[k].visible = rimS > 0.002
-        const glowS = lit[k] * (0.07 + 0.15 * a)
+        const glowS = Math.max(0.02, l * (0.07 + 0.15 * a))
         glowMats[k].uniforms.uStrength.value = glowS
-        inners[k].visible = glowS > 0.002
-        // the engraving: frosted when dark, edge-lit when the beam runs through
+        // the engraving: frosted when dark, edge-lit when the beam runs through,
+        // and gone once the story has moved on (no glyphs peeking past the card)
         const L = labels[k]
-        const glowAmt = 0.42 + 0.25 * lit[k] + 0.75 * a
-        L.word.color.set(G.white).multiplyScalar(glowAmt)
-        L.num.color.set(G.mint).multiplyScalar(glowAmt * 1.1)
+        const pa = PASSED[k]
+        const passed = k < 3 ? smoothstep(pa[0], pa[1], local) : 0
+        const glowAmt = 0.42 + 0.25 * l + 0.75 * a
+        L.word.color.copy(WHITE).multiplyScalar(glowAmt)
+        L.num.color.copy(MINT).multiplyScalar(glowAmt * 1.1)
+        L.base = 0.95 * (1 - passed)
+        L.word.opacity = L.base
+        L.num.opacity = L.base
+        L.wordMesh.visible = L.numMesh.visible = passed < 0.995
       }
 
       // ---- the light
@@ -455,8 +509,13 @@ export default function create(): Chapter {
       w.glow = lerp(0.4 + 0.08 * intro, 0.62, results)
       w.flow = rm ? 0.2 : 0.7
       w.spread = lerp(0.8, 1.1, results)
+      spreadNow = w.spread
       w.strips = lerp(lerp(0.6, 0.66, intro), 0.3, results)
       w.stripColor = '#e8fff4'
+      // short softboxes around the subject (they fade before the copy and the
+      // chrome; a portrait frame is tall, so shorter still). Which strips show
+      // is decided in camera(): only those clear of the glass.
+      w.stripHeight = frame.height > frame.width * 1.1 ? 0.36 : lerp(0.55, 0.45, results)
       w.env = 1.35 + 0.15 * intro
       // light sweeps: each arrival runs the studio highlights across the glass
       let turn = 0.35
@@ -493,19 +552,22 @@ export default function create(): Chapter {
           s.classList.toggle('is-done', cur >= 0 && i < cur)
         })
       }
-      stepTitles.forEach((h, i) => setRise(h, i === cur && cardV > 0.05))
+      for (let i = 0; i < stepTitles.length; i++) setRise(stepTitles[i], i === cur && cardV > 0.05)
       for (let i = 0; i < 4; i++) {
         const f = i < idx ? 1 : i === idx ? (inSteps ? ease.outCubic(clamp(phase / 0.55)) : local > B ? 1 : 0) : 0
-        const s = `scaleX(${f.toFixed(3)})`
-        if (fillCache[i] !== s) {
-          fillCache[i] = s
-          fills[i].style.transform = s
+        const q = Math.round(f * 1000)
+        if (fillCache[i] !== q) {
+          fillCache[i] = q
+          fills[i].style.transform = `scaleX(${(q / 1000).toFixed(3)})`
         }
       }
 
       const tilesOn = local > TILES[0] && local < TILES[1]
       reveal(statsEl, window01(local, TILES[0] - 0.01, TILES[1] + 0.005, 0.02), 0)
-      tiles.forEach(tile => tile.classList.toggle('is-on', tilesOn))
+      if (tilesOn !== tilesShown) {
+        tilesShown = tilesOn
+        for (const tile of tiles) tile.classList.toggle('is-on', tilesOn)
+      }
     },
 
     camera(local: number, frame: Frame, out: CameraPose) {
@@ -531,7 +593,50 @@ export default function create(): Chapter {
         scratch.updateMatrixWorld()
         tmpFocus.project(scratch)
         if (Number.isFinite(tmpFocus.x) && Number.isFinite(tmpFocus.y)) {
-          ctxRef.world.params.focus.set(clamp(tmpFocus.x, -1.2, 1.2) * aspect, clamp(tmpFocus.y, -0.9, 0.9))
+          const w = ctxRef.world.params
+          const fx = clamp(tmpFocus.x, -1.2, 1.2) * aspect
+          w.focus.set(fx, clamp(tmpFocus.y, -0.9, 0.9))
+
+          // backlight strips stay off the glass: a strip whose centre falls on
+          // (or just inside) a prism's silhouette fades out; strips in the gaps
+          // and just outside an edge stay on
+          _f.subVectors(tmpTgt, tmpPos)
+          const shift = Math.sin(Math.atan2(_f.x, -_f.z)) * 0.35
+          for (let j = 0; j < 3; j++) {
+            stripX[j] = fx + STRIP_OFF[j] * spreadNow - shift
+            stripM[j] = 1
+          }
+          rig.updateMatrixWorld()
+          for (let k = 0; k < 4; k++) {
+            let x0 = Infinity
+            let x1 = -Infinity
+            for (let c = 0; c < CORNERS.length; c++) {
+              _c.copy(CORNERS[c]).applyMatrix4(prisms[k].matrixWorld).project(scratch)
+              if (!Number.isFinite(_c.x) || _c.z > 1) continue
+              x0 = Math.min(x0, _c.x * aspect)
+              x1 = Math.max(x1, _c.x * aspect)
+            }
+            if (x1 < x0) continue
+            for (let j = 0; j < 3; j++) {
+              const outside = Math.max(x0 - stripX[j], stripX[j] - x1)
+              stripM[j] *= smoothstep(-0.04, 0.08, outside)
+            }
+          }
+          w.stripMask.set(stripM[0], stripM[1], stripM[2])
+
+          // an engraving the frame edge would crop fades instead (no "Bu" at the edge)
+          for (let k = 0; k < 4; k++) {
+            const L = labels[k]
+            if (!L.wordMesh.visible) continue
+            let reach = 0
+            for (let e = -1; e <= 1; e += 2) {
+              _c.set(e * L.halfW, 0, 0).applyMatrix4(L.wordMesh.matrixWorld).project(scratch)
+              reach = Math.max(reach, Math.abs(_c.x), Math.abs(_c.y))
+            }
+            const o = L.base * (1 - smoothstep(0.93, 1.0, reach))
+            L.word.opacity = o
+            L.num.opacity = o
+          }
         }
       }
     },

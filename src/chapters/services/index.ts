@@ -1,10 +1,10 @@
 import * as THREE from 'three'
 import type { CameraPose, Chapter, ChapterContext, Frame } from '../../core/types'
-import { clamp, lerp, smoothstep } from '../../core/math'
+import { clamp, damp, lerp, smoothstep } from '../../core/math'
 import { nextFrame } from '../../core/yield'
 import { G } from '../../kit/glass'
 import { Hud, type HudMetrics } from './hud'
-import { APOTHEM, FACET_COLORS, N, OUTER_R, PLINTH_R, PLINTH_Y, STEP, TILE_H, buildCrystal, type Crystal } from './crystal'
+import { APOTHEM, FACET_COLORS, N, OUTER_R, PLINTH_R, PLINTH_Y, STEP, TILE_D, TILE_H, buildCrystal, type Crystal } from './crystal'
 import './services.css'
 
 /*
@@ -24,6 +24,14 @@ import './services.css'
  *              as the frosted pane cut arrives
  *
  * Everything derives from `local`; frame.time only drives idle float/sway.
+ * Two things are smoothed over time so fast scrolling can't strobe
+ * (WCAG 2.3.1): each facet's light is damped toward its target, and the
+ * per-facet studio sweep, caustic dip and breathe fade out with scroll speed,
+ * so a fast scrub merges into one steady light.
+ *
+ * Backlight: two short softbox strips straddle the facet in focus, on its
+ * joints (phones: out by the front three's outer joints), so the glass edges
+ * carry the light and the glyph sits on clean dark glass.
  */
 
 const A = 0.1
@@ -76,10 +84,13 @@ export default function create(): Chapter {
   let mobile = false
 
   const colA = new THREE.Color()
-  const colB = new THREE.Color()
   const white = new THREE.Color(1, 1, 1)
   const tmp = new THREE.Color()
   const glyphCols = FACET_COLORS.map(c => new THREE.Color(c))
+  // the light the facet throws into the studio and onto the turntable: emerald stays the
+  // accent (glyph, chip, rim), so emerald facets pour mint, not a green flood
+  const poolCols = FACET_COLORS.map(c => new THREE.Color(c === G.signal ? G.mint : c))
+  const iris = new THREE.Color(G.iris)
 
   // the pose is computed in update() (so the world focus can sit behind the crystal) and copied in camera()
   const pose = { pos: new THREE.Vector3(0, 0.6, 9), target: new THREE.Vector3(), fov: 30, cx: 0.3, cy: 0 }
@@ -89,6 +100,20 @@ export default function create(): Chapter {
   let lastHoverX = 9
   let lastHoverY = 9
   let lastLocal = 0
+
+  // time-smoothed light (see the header): per-facet focus, speed calm, the colour of the moment
+  const lit = new Float32Array(N)
+  let calm = 1
+  let snap = true
+  const mood = new THREE.Color()
+
+  // the facet in focus, at rest, in world-field units (NDC·aspect): joints left/right of it,
+  // the outer joints of the front three, its vertical centre and half-height (strip placement)
+  const tileP = { xl: 0, xr: 0, xl3: 0, xr3: 0, yc: 0, hh: 0.5 }
+  const JOINT_R = (APOTHEM + TILE_D / 2) / Math.cos(STEP / 2)
+  const jointPts = [-0.5, 0.5, -1.5, 1.5].map(k => new THREE.Vector3(Math.sin(k * STEP) * JOINT_R, 0, Math.cos(k * STEP) * JOINT_R))
+  const tileTop = new THREE.Vector3(0, TILE_H / 2, APOTHEM + TILE_D / 2)
+  const tileBot = new THREE.Vector3(0, -TILE_H / 2, APOTHEM + TILE_D / 2)
 
   // framing: the seated crystal's silhouette (tile tops + turntable rim), projected
   const bounds: THREE.Vector3[] = []
@@ -173,6 +198,25 @@ export default function create(): Chapter {
     pose.fov = fov
     pose.cx = ax
     pose.cy = ay
+
+    // where the facet in focus sits on screen (for the backlight strips)
+    probe.position.copy(pose.pos)
+    probe.lookAt(pose.target)
+    probe.updateMatrixWorld()
+    const xl = pv.copy(jointPts[0]).project(probe).x * aspect
+    const xr = pv.copy(jointPts[1]).project(probe).x * aspect
+    const xl3 = pv.copy(jointPts[2]).project(probe).x * aspect
+    const xr3 = pv.copy(jointPts[3]).project(probe).x * aspect
+    const yT = pv.copy(tileTop).project(probe).y
+    const yB = pv.copy(tileBot).project(probe).y
+    if (Number.isFinite(xl + xr + xl3 + xr3 + yT + yB) && xr > xl && yT > yB) {
+      tileP.xl = xl
+      tileP.xr = xr
+      tileP.xl3 = xl3
+      tileP.xr3 = xr3
+      tileP.yc = (yT + yB) / 2
+      tileP.hh = Math.max(0.05, (yT - yB) / 2)
+    }
   }
 
   return {
@@ -200,6 +244,7 @@ export default function create(): Chapter {
 
     onEnter() {
       active = true
+      snap = true
     },
     onLeave() {
       active = false
@@ -211,6 +256,9 @@ export default function create(): Chapter {
       const post = ctx.post.params
       const rm = frame.reducedMotion
       const t = frame.time * (rm ? 0.2 : 1)
+      const dt = frame.dt
+      // a teleport (nav jump, entering the chapter) lands settled; scrolling eases
+      if (Math.abs(local - lastLocal) > 0.04) snap = true
       lastLocal = local
       const m = hud.metrics()
       computePose(local, frame, m)
@@ -219,6 +267,9 @@ export default function create(): Chapter {
       const introMix = 1 - smoothstep(0.086, 0.112, local)
       const out = smoothstep(0.9, 0.97, local)
       const outSpin = clamp((local - 0.9) / 0.1)
+      // speed calm: 1 at reading pace, 0 when scrubbing ≳ 4 facets/s (drops fast, recovers gently)
+      const calmV = 1 - smoothstep(0.5, 1.2, Math.abs(frame.velocity))
+      calm = snap ? calmV : damp(calm, calmV, calmV < calm ? 10 : 2.5, dt)
 
       // ---------- the turntable
       const standIn = glide(local / 0.075)
@@ -231,12 +282,15 @@ export default function create(): Chapter {
       crystal.stand.scale.setScalar(0.9 + 0.1 * standIn)
 
       // ---------- the facets
-      const breathe = turning * 0.09 * (rm ? 0.4 : 1)
+      const breathe = turning * calm * 0.09 * (rm ? 0.4 : 1)
       for (const tile of crystal.tiles) {
         const i = tile.index
         const dFront = Math.min(i, N - i) // 0 front … 5 back
         const e = glide((local - (5 - dFront) * 0.0058) / 0.046)
-        const act = Math.max(0, 1 - Math.abs(wrapd(i - f)))
+        // the facet's light follows the turn with a short lag, so a fast scrub merges into a steady glow
+        const target = Math.max(0, 1 - Math.abs(wrapd(i - f)))
+        lit[i] = snap ? target : damp(lit[i], target, 5, dt)
+        const act = lit[i]
         const focus = act * (1 - introMix) * (1 - out)
         const explode = (1 - e) * 1.9
         tile.holder.position.set(0, (i % 2 ? 0.45 : -0.45) * (1 - e), APOTHEM + explode + breathe + 0.07 * focus)
@@ -261,12 +315,15 @@ export default function create(): Chapter {
       // ---------- colour of the moment: blend between the two facets around f
       const i0 = Math.max(0, Math.min(N - 1, Math.floor(f)))
       const i1 = Math.min(N - 1, i0 + 1)
-      colA.set(FACET_COLORS[i0]).lerp(colB.set(FACET_COLORS[i1]), f - i0)
+      colA.copy(poolCols[i0]).lerp(poolCols[i1], f - i0)
+      if (snap) mood.copy(colA)
+      else mood.lerp(colA, 1 - Math.exp(-4 * dt))
+      snap = false
 
       // caustic pool + emerald rim
       const pool = crystal.poolMat.uniforms
-      ;(pool.uColor.value as THREE.Color).copy(colA).lerp(white, out * 0.35)
-      pool.uStrength.value = (0.22 + 0.36 * (1 - turning)) * (0.3 + 0.7 * standIn) * (1 + 0.3 * out)
+      ;(pool.uColor.value as THREE.Color).copy(mood).lerp(white, out * 0.35)
+      pool.uStrength.value = (0.22 + 0.36 * (1 - turning * calm)) * (0.3 + 0.7 * standIn) * (1 + 0.3 * out)
       pool.uTime.value = t
       crystal.rimMat.color.set(G.signal).multiplyScalar(0.5 + 0.7 * standIn + 0.5 * out)
 
@@ -281,13 +338,23 @@ export default function create(): Chapter {
       const yaw = Math.atan2(dir.x, -dir.z)
       const pitch = Math.asin(clamp(dir.y, -1, 1))
       const aspect = frame.width / Math.max(1, frame.height)
-      w.focus.set(pose.cx * aspect + Math.sin(yaw) * 0.35, pose.cy + 0.22 + pitch * 0.3)
-      w.a = out > 0.01 ? tmp.copy(colA).lerp(colB.set(G.iris), out) : colA
+      // strips: the left and centre-right bars (field: focus − 0.34·spread and + 0.18·spread)
+      // straddle the facet in focus, on its joints where the spread allows; phones, where the
+      // tile is narrow, put them out behind the front three's outer joints. Spread also sizes
+      // the pools, so it stays within a band that keeps the studio's colour where it was.
+      const inner = (tileP.xr - tileP.xl) / 0.52
+      const spread = clamp(inner >= 0.6 ? inner : (tileP.xr3 - tileP.xl3) / 0.52, 0.85, 1.15)
+      const bandY = tileP.yc + 0.25 * tileP.hh
+      w.focus.set((tileP.xl + tileP.xr) / 2 + 0.08 * spread + Math.sin(yaw) * 0.35, bandY + pitch * 0.3)
+      w.spread = spread * (1 + 0.12 * out)
+      // short: a glow behind the glass that fades before the plinth and the chrome; taller at the flare
+      w.stripHeight = ((0.62 * tileP.hh) / spread) * (1 + 1.3 * out * out)
+      w.stripMask.set(0.8, 1, 0.7 * out)
+      w.a = out > 0.01 ? tmp.copy(mood).lerp(iris, out) : mood
       w.b = out > 0.5 ? G.rose : G.aqua
       w.c = G.iris
       w.d = out > 0.5 ? G.amber : G.rose
       w.glow = (mobile ? 0.66 : 0.78) + 0.1 * introMix + 0.45 * out
-      w.spread = 0.95 + 0.15 * out
       w.strips = 0.62 + 0.38 * out
       w.stripColor = '#eafff5'
       w.env = 1.25
@@ -295,8 +362,9 @@ export default function create(): Chapter {
       // (continuous across facets: sin(π·frac) is 0 at every rest), so the strip
       // highlights run across the glass as each tile arrives and every facet rests
       // under the same light. Static under reduced motion.
+      // Scaled by the speed calm: scrubbing fast holds the studio still.
       const sweep = Math.sin(Math.PI * (f - Math.floor(f)))
-      w.envTurn = rm ? ENV_REST : ENV_REST - 1.3 * sweep - spin * 0.6
+      w.envTurn = rm ? ENV_REST : ENV_REST - 1.3 * sweep * calm - spin * 0.6
       w.keyDir.set(-0.55, 0.8, 0.5)
       w.key = 1.8
       w.fill = 0.3

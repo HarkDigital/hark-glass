@@ -130,8 +130,8 @@ export function buildScene(opts: {
   const twinMat = new THREE.ShaderMaterial({
     uniforms: {
       uDisk: disk,
-      uBody: { value: new THREE.Color('#12382d') },
-      uRim: { value: new THREE.Color('#dffff0').multiplyScalar(0.8) },
+      uBody: { value: new THREE.Color('#1a2c33') },
+      uRim: { value: new THREE.Color('#e6f2fa').multiplyScalar(0.8) },
       uCore: { value: 0 },
     },
     vertexShader: PROXY_VERT,
@@ -198,7 +198,8 @@ export function buildScene(opts: {
 
   // ---- listening rings behind the mark
   const ringU = {
-    uColor: { value: new THREE.Color(G.mint).multiplyScalar(0.2) },
+    // cool silver hairlines: the room stays clear, the core keeps the colour
+    uColor: { value: new THREE.Color('#d6e6ee').multiplyScalar(0.16) },
     uStrength: { value: 1 },
     uPhase: { value: 0 },
     uGap: { value: 0.34 },

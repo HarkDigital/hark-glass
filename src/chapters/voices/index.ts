@@ -29,8 +29,8 @@ import './voices.css'
 /*
  * REFLECTIONS (voices) — a quiet hall of tall glass panes standing in depth,
  * one per client, each carrying the client's initials as edge-lit etching.
- * A thick glass “ floats at the front and refracts the warm light and the
- * etched letters behind it.
+ * A smoked-glass opening “ floats in front, above and left of each voice's
+ * initials (never over them), and bends the backlight strip behind it.
  *
  *   0.00–0.085  intro: the hall seen down its length, “We listen. They talk.”
  *   0.085–0.92  eight voices (~0.104 each). As each voice's quote comes into
@@ -51,6 +51,9 @@ const HYST = 0.006
 /** the out-beat: panes align into one */
 const OUT0 = 0.922
 const OUT1 = 0.968
+
+/** studio rotation at rest (see update: panes clear, the mark's rim lit) */
+const ENV_TURN = 4.1
 
 /** gentle start, quick middle, long settle (zero velocity at both ends) */
 const glide = (t: number) => {
@@ -179,9 +182,12 @@ export default function create(): Chapter {
       out.pos.set(lerp(land.px, port.px, pk), lerp(land.py, port.py, pk), lerp(land.pz, port.pz, pk))
       out.tgt.set(lerp(land.tx, port.tx, pk), lerp(land.ty, port.ty, pk), lerp(land.tz, port.tz, pk))
       out.fov = lerp(land.fov, port.fov, pk)
-      // the mark hangs in front of the first pane
-      out.mark.set(p0.x + lerp(1.05, 0.2, pk), lerp(0.55, 0.9, pk), p0.z + lerp(3.4, 3.6, pk))
-      out.markScale = lerp(1.45, 1.15, pk)
+      // the mark hangs in front of the hall, clear of the first pane's
+      // initials: right of it in landscape (nearer on narrower screens), low
+      // over the lit floor in portrait
+      const wide = clamp(remap(aspect, 1.25, 1.7))
+      out.mark.set(p0.x + lerp(lerp(1.6, 1.95, wide), 0.55, pk), lerp(lerp(1.3, 0.85, wide), -0.85, pk), p0.z + lerp(3.4, 4.2, pk))
+      out.markScale = lerp(lerp(0.85, 1.0, wide), 0.8, pk)
       return out
     }
     const last = k >= N
@@ -215,13 +221,14 @@ export default function create(): Chapter {
     out.pos.set(P.x - lerp(lOff, 0, pk), lerp(0.42, pTy + 0.55, pk), P.z + lerp(lD, pD, pk))
     out.tgt.set(P.x - lerp(lOff, 0, pk), lerp(0.08, pTy, pk), P.z)
     out.fov = lerp(lFov, pFov, pk)
-    // the quote mark: in front of the pane's upper-left corner, overlapping the initials
+    // the quote mark: in front of the pane's upper-left corner, above and left
+    // of the initials (never over them, nor over the pane's index)
     if (last) {
-      out.mark.set(P.x, lerp(0.1, 0.35, pk), P.z + 2.2)
-      out.markScale = lerp(0.8, 0.7, pk)
+      out.mark.set(P.x + lerp(-1.05, -0.62, pk), lerp(1.0, 0.95, pk), P.z + lerp(1.9, 1.2, pk))
+      out.markScale = lerp(0.7, 0.5, pk)
     } else {
-      out.mark.set(P.x + lerp(-0.9, -0.42, pk), lerp(0.62, 0.64, pk), P.z + lerp(1.75, 1.0, pk))
-      out.markScale = lerp(0.96, 0.64, pk)
+      out.mark.set(P.x + lerp(-1.2, -0.62, pk), lerp(0.95, 0.9, pk), P.z + lerp(1.75, 1.0, pk))
+      out.markScale = lerp(0.7, 0.5, pk)
     }
     return out
   }
@@ -482,7 +489,10 @@ export default function create(): Chapter {
       w.stripColor = '#ffeede'
       // the field gathers behind the pane (screen space: x = ndc.x * aspect)
       const aspect = frame.width / Math.max(1, frame.height)
-      const dwellFx = lerp(0.42 * aspect, 0, pk)
+      // dwell: the left strip stands behind the quote mark (glass bends it into
+      // bright lines), the far-right one just past the pane's right edge; the
+      // centre strip would cross the initials, so it only plays in the intro
+      const dwellFx = lerp(0.42 * aspect - 0.12, 0.12, pk)
       const introFx = lerp(0.3 * aspect, 0.1, pk)
       const outFx = 0
       const fxOf = (k: number) => (k < 0 ? introFx : k >= N ? outFx : dwellFx)
@@ -492,9 +502,12 @@ export default function create(): Chapter {
       w.glow = lerp(lerp(0.3, 0.25, pk), 0.22, outA)
       w.flow = rm ? 0.25 : 0.55
       w.strips = lerp(1.0, 0.45, outA)
-      // light sweeps: each arrival runs the studio round a little (scroll-derived)
-      const sweeps = tr.from + 1 + tr.t // 0 → N+1 across the chapter
-      w.envTurn = 0.6 + sweeps * (rm ? 0.18 : 0.62)
+      w.stripMask.set(1, lerp(tr.from < 0 ? 1 : 0, tr.to < 0 ? 1 : 0, tr.t), lerp(1, 0.85, pk))
+      // the studio stands where the panes stay clear at rest (no strip
+      // reflection over the initials) while the quote mark's rim catches the
+      // tall strip; each glide swings it away and back — a light run over the
+      // mark, never a sweep across the letters
+      w.envTurn = ENV_TURN - (rm ? 0 : 0.55 * arc)
       w.env = 1.15 + (rm ? 0 : 0.35 * arc)
       w.key = 1.5
       w.keyDir.set(-0.55, 0.75, 0.6)

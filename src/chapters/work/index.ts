@@ -6,7 +6,7 @@ import { nextFrame } from '../../core/yield'
 import { SECTIONS, WORK, workImage, type WorkItem } from '../../content'
 import { G } from '../../kit/glass'
 import { loadScreenshot, whenRevealed } from '../../kit/images'
-import { ACCENTS, BW, CH, STACK_THETA, arcNormal, buildGallery, onArc, theta, LIFT, type Gallery } from './scene'
+import { ACCENTS, BW, CH, CW, STACK_THETA, arcNormal, buildGallery, isPreview, onArc, theta, LIFT, type Gallery } from './scene'
 import './work.css'
 
 /*
@@ -16,16 +16,18 @@ import './work.css'
  * plinth, each with its project's screenshot embedded behind the front face.
  * The camera glides along the arc; the block it arrives at turns to face it
  * and a light sweep (the studio environment rotating) runs across its face
- * while the others dim and drift back. A frosted card names the block on
- * screen. At the end of the plinth, nine thin frosted index cards fan open in
- * depth (the rest of the portfolio), with the list of links beside them.
+ * while the others dim and drift back; blocks the story has passed fade right
+ * down (on landscape they sit behind the card's column). A frosted card names
+ * the block on screen. At the end of the plinth, a file of nine frosted glass
+ * cards fans open in depth (the rest of the portfolio), with the list of links
+ * beside it: the current row's card rises out of the file showing its site.
  *
- *   0.000–0.085  intro: "Built to be heard." — the row at a 3/4 angle, light
- *                running block to block
- *   0.085–0.800  six items (~0.119 each): glide 0–34%, turn 6–42%, sweep
+ *   0.000–0.145  intro: "Built to be heard." — the row at a 3/4 angle, light
+ *                running block to block (nav jumps land here, at 0.12)
+ *   0.145–0.800  six items (~0.109 each): glide 0–34%, turn 6–42%, sweep
  *                16–62%, card 17–99%
- *   0.800–0.842  glide to the stack (a brief focus pull), the cards fan open
- *   0.842–0.956  "Nine more, all live." list; the current card slides out
+ *   0.800–0.842  glide to the file (a brief focus pull), the cards fan open
+ *   0.842–0.956  "Nine more, all live." list; the current card rises out
  *   0.956–1.000  out: a slow pull back
  *
  * Everything derives from `local`; frame.time only drives the float, the
@@ -37,7 +39,7 @@ const REST = WORK.filter(w => !w.featured)
 const NF = FEATURED.length
 const NR = REST.length
 
-const F0 = 0.085
+const F0 = 0.145
 const F1 = 0.8
 const SPAN = (F1 - F0) / NF
 const LIST_IN = 0.842
@@ -82,13 +84,6 @@ const emLast = (s: string) => {
   if (parts.length < 2) return `<em>${esc(s)}</em>`
   const last = parts.pop()!
   return `${esc(parts.join(' '))} <em>${esc(last)}</em>`
-}
-const isPreview = (url: string) => {
-  try {
-    return /(^|\.)harktest\.com$/i.test(new URL(url).hostname)
-  } catch {
-    return false
-  }
 }
 const hostOf = (url: string) => {
   try {
@@ -222,6 +217,7 @@ class Work implements Chapter {
   private sa = shot()
   private sb = shot()
   private tmp = new THREE.Vector3()
+  /** per index card: 0 = in the file, 1 = risen out of it (damped) */
   private sel: number[] = REST.map(() => 0)
   /**
    * Materials that carry their own envMap (the studio) so their
@@ -276,10 +272,31 @@ class Work implements Chapter {
           old?.dispose()
         })
         .catch(err => console.warn(`[work] missing screenshot for ${FEATURED[k].id}`, err))
+    // the nine index cards show theirs only when risen (~a third of a block's size on screen)
+    const cardWidth = this.mobile ? 640 : (window.devicePixelRatio || 1) > 1.4 ? 960 : 720
+    const loadCard = (j: number) =>
+      loadScreenshot(workImage(REST[j].id), { width: cardWidth })
+        .then(tex => {
+          tex.anisotropy = 4
+          try {
+            this.ctx.renderer.initTexture(tex)
+          } catch {
+            /* uploads on first use instead */
+          }
+          const m = this.gal.cards[j].shotMat
+          const old = m.map
+          m.map = tex
+          old?.dispose()
+        })
+        .catch(err => console.warn(`[work] missing screenshot for ${REST[j].id}`, err))
     load(0)
     whenRevealed().then(async () => {
       for (let k = 1; k < NF; k++) {
         await load(k)
+        await nextFrame()
+      }
+      for (let j = 0; j < NR; j++) {
+        await loadCard(j)
         await nextFrame()
       }
     })
@@ -437,20 +454,29 @@ class Work implements Chapter {
     return out
   }
 
-  private stackShot(drift: number, out: Shot) {
+  /**
+   * The file of cards, with room above it for the card that rises out.
+   * `row` (0..1, continuous in scroll) eases the aim back along the file as
+   * the risen card moves deeper; portrait frames just the risen card (the
+   * file sits behind the list panel there), tilting up to it as the rows
+   * begin (`up` 0..1).
+   */
+  private stackShot(drift: number, row: number, up: number, out: Shot) {
     const L = this.lay!
+    const port = L.portrait
     arcNormal(STACK_THETA, _n)
-    // the fanned cards step back into depth: aim at their centroid
-    onArc(STACK_THETA, undefined, _c).addScaledVector(_n, -0.5)
-    _c.y = 0.86
+    const depth = (NR - 1) * CARD_STEP_Z
+    onArc(STACK_THETA, undefined, _c).addScaledVector(_n, port ? -0.1 - depth * row : -0.35 - depth * 0.35 * row)
+    _c.y = port ? lerp(0.95, 1.52 + 0.2 * row, up) : 1.1 + 0.12 * row
     const yaw = -STACK_THETA - 0.16 + drift * 0.04
-    frameTo(out, _c, 2.4, 2.05, yaw, 0.15, FOV, this.region('list', 0), L.W, L.H, 1.0)
+    if (port) frameTo(out, _c, CW + 0.14, lerp(1.8, 1.28, up), yaw, 0.13, FOV, this.region('list', 0), L.W, L.H, CW / 2 + 0.04)
+    else frameTo(out, _c, CW + 0.7, 2.4, yaw, 0.15, FOV, this.region('list', 0), L.W, L.H, CW / 2 + 0.04)
     out.pos.lerp(out.tgt, drift * 0.03)
     return out
   }
 
   private outShot(out: Shot) {
-    this.stackShot(1, out)
+    this.stackShot(1, 1, 1, out)
     this.tmp.subVectors(out.pos, out.tgt)
     out.pos.copy(out.tgt).addScaledVector(this.tmp, 1.28)
     out.pos.y += 0.35
@@ -483,9 +509,11 @@ class Work implements Chapter {
       const tr = k === 0 ? TRAVEL0 : TRAVEL
       return this.itemShot(k, clamp((ph.p - tr) / (1 - tr)), out)
     }
-    if (l < LIST_IN) return this.travel(this.itemShot(NF - 1, 1, this.sa), this.stackShot(0, this.sb), (l - F1) / (LIST_IN - F1), 0.7, out)
-    if (l < LIST_OUT) return this.stackShot((l - LIST_IN) / (LIST_OUT - LIST_IN), out)
-    return this.travel(this.stackShot(1, this.sa), this.outShot(this.sb), (l - LIST_OUT) / (1 - LIST_OUT), 0, out)
+    const row = smoothstep(ROW0, ROW1, l)
+    const up = smoothstep(LIST_IN - 0.012, ROW0 + 0.004, l)
+    if (l < LIST_IN) return this.travel(this.itemShot(NF - 1, 1, this.sa), this.stackShot(0, 0, up, this.sb), (l - F1) / (LIST_IN - F1), 0.7, out)
+    if (l < LIST_OUT) return this.stackShot((l - LIST_IN) / (LIST_OUT - LIST_IN), row, up, out)
+    return this.travel(this.stackShot(1, 1, 1, this.sa), this.outShot(this.sb), (l - LIST_OUT) / (1 - LIST_OUT), 0, out)
   }
 
   // ------------------------------------------------------------------ light
@@ -542,13 +570,24 @@ class Work implements Chapter {
     wp.flow = reduced ? 0.25 : 0.7
     wp.strips = ph.kind === 'intro' ? 0.9 : 1
     wp.stripColor = '#e3ecff'
-    wp.spread = clamp(s.hw * 1.8, 0.7, 1.5)
+    // Strips: short softboxes. In the intro they glow behind the row (below
+    // the headline); from the first glide on, only the outer pair, spread so
+    // they stand just off the subject's sides (the glass edges catch them,
+    // the screenshot face stays clean). The pair's midpoint sits 0.09·spread
+    // right of focus, so focus shifts left by that much.
+    const flank = smoothstep(T0A, T0B, l)
+    const spreadIntro = clamp(s.hw * 1.8, 0.7, 1.5)
+    const spreadFlank = clamp((s.hw + 0.07) / 0.43, 0.7, 2.2)
+    const spread = lerp(spreadIntro, spreadFlank, flank)
+    wp.spread = spread
+    wp.stripHeight = lerp(0.36, 0.52 / spread, flank)
+    wp.stripMask.set(1, 0.55 * (1 - flank), 1)
     // focus behind the subject, in the field's own coordinates (incl. its heading drift)
     _d.subVectors(s.tgt, s.pos).normalize()
     const yawW = Math.atan2(_d.x, -_d.z)
     const pitchW = Math.asin(clamp(_d.y, -1, 1))
     const aspect = frame.width / Math.max(1, frame.height)
-    wp.focus.set(s.cx * aspect + Math.sin(yawW) * 0.35, s.cy + pitchW * 0.3 + 0.05)
+    wp.focus.set(s.cx * aspect + Math.sin(yawW) * 0.35 - 0.09 * spread * flank, s.cy + pitchW * 0.3 + 0.05)
     wp.env = ENV
     wp.envTurn = this.turnAt(l)
     wp.key = 1.5
@@ -569,6 +608,7 @@ class Work implements Chapter {
 
     // ---- blocks
     const dimAll = smoothstep(F0, F0 + 0.25 * SPAN, l)
+    const landscape = !this.lay!.portrait
     const floatA = reduced ? 0.004 : 0.012
     const floatF = reduced ? 0.25 : 0.8
     const inList = l > F1 + 0.3 * SPAN
@@ -583,45 +623,62 @@ class Work implements Chapter {
       const b = gal.blocks[k]
       const w = activeW(k, l)
       const d = dimAll * (1 - w)
+      // on landscape a block the story has moved past rests where the card
+      // docks: take its screenshot, plaque and inlay right down so no site
+      // text sits beside the card's text
+      const next = k < NF - 1 ? itemStart(k + 1) : F1
+      const gone = landscape ? smoothstep(next, next + 0.3 * SPAN, l) : 0
       b.station.visible = !inList || k >= NF - 2
       const sway = reduced ? 0 : Math.sin(time * 0.35 + k) * 0.03 * w
       b.pivot.rotation.y = lerp(REST_YAW, ACTIVE_YAW, w) + sway
-      b.pivot.position.z = lerp(-0.3 * d, 0.14, w)
+      b.pivot.position.z = lerp(-0.3 * d - 0.2 * gone, 0.14, w)
       b.pivot.position.y = LIFT + 0.02 * w + Math.sin(time * floatF + k * 1.3) * floatA
       const pu = pulse(k)
-      b.shotMat.color.setScalar(lerp(lerp(0.78, 0.34, d), 0.82, w))
-      b.glassMat.envMapIntensity = (lerp(lerp(1, 0.66, d), 1.1, w) + pu * 0.45) * ENV
-      b.gemMat.color.set(G.signal).multiplyScalar(lerp(lerp(0.9, 0.35, d), 2.6, w) + pu * 1.4)
-      b.plaque.material.opacity = lerp(lerp(0.5, 0.28, d), 0.8, w)
-      b.rimMat.uniforms.uStrength.value = lerp(lerp(0.35, 0.12, d), 0.75, w) + pu * 0.6
+      const shotB = lerp(lerp(0.78, 0.34, d), 0.82, w) * (1 - gone)
+      b.shotMat.color.setScalar(shotB)
+      b.shot.visible = shotB > 0.003
+      b.glassMat.envMapIntensity = (lerp(lerp(1, 0.66, d), 1.1, w) + pu * 0.45) * (1 - 0.3 * gone) * ENV
+      b.gemMat.color.copy(b.gemColor).multiplyScalar((lerp(lerp(0.9, 0.35, d), 2.6, w) + pu * 1.4) * (1 - 0.9 * gone))
+      b.plaque.material.opacity = lerp(lerp(0.5, 0.28, d), 0.8, w) * (1 - 0.85 * gone)
+      b.rimMat.uniforms.uStrength.value = (lerp(lerp(0.35, 0.12, d), 0.75, w) + pu * 0.6) * (1 - 0.5 * gone)
       const pu2 = b.poolMat.uniforms
-      pu2.uStrength.value = lerp(lerp(0.26, 0.12, d), 0.5, w) + pu * 0.25
+      pu2.uStrength.value = (lerp(lerp(0.26, 0.12, d), 0.5, w) + pu * 0.25) * (1 - 0.4 * gone)
       pu2.uTime.value = time * (reduced ? 0.08 : 0.35)
     }
     gal.lineMat.color.set('#9d92ff').multiplyScalar(lerp(1.4, 2.2, dimAll))
 
-    // ---- the nine-card stack
+    // ---- the file of nine cards: the current row's card rises out of it
     const stackOn = l > F1 - 0.5 * SPAN
     gal.stack.visible = stackOn
     if (stackOn) {
       const fan = settle((l - (F1 + 0.008)) / (LIST_IN - F1 + 0.01))
-      const inRows = l >= ROW0 - 0.006 && l <= LIST_OUT
+      // from the first row on, one card is always out (the last stays up through the pull back)
+      const inRows = l >= ROW0 - 0.006
       const scrollRow = clamp(Math.floor(((l - ROW0) / (ROW1 - ROW0)) * NR), 0, NR - 1)
       const selIdx = this.hoverRow >= 0 ? this.hoverRow : inRows ? scrollRow : -1
-      const stepY = lerp(0.014, 0.125, fan)
-      const stepZ = lerp(0.03, 0.15, fan)
-      const kS = 1 - Math.exp(-9 * dt)
+      const stepY = lerp(0.006, CARD_STEP_Y, fan)
+      const stepZ = lerp(0.028, CARD_STEP_Z, fan)
+      const kS = 1 - Math.exp(-7 * dt)
+      const cy = 0.07 + (CH / 2) * Math.cos(CARD_LEAN)
       for (let j = 0; j < NR; j++) {
         const c = gal.cards[j]
-        const dpt = NR - 1 - j
         const target = j === selIdx ? 1 : 0
         this.sel[j] += (target - this.sel[j]) * kS
+        if (Math.abs(target - this.sel[j]) < 1e-3) this.sel[j] = target
         const sv = this.sel[j]
-        c.root.position.set(sv * 0.3, 0.07 + CH / 2 + dpt * stepY + sv * 0.02, -dpt * stepZ + sv * 0.08)
-        c.root.rotation.set(-0.16, -0.06 * sv, 0)
-        c.mat.roughness = lerp(0.3, 0.1, sv)
-        c.mat.envMapIntensity = lerp(0.9, 1.2, sv) * ENV
-        c.name.material.opacity = lerp(0.72, 1, sv) * lerp(0.4, 1, fan)
+        const up = sv * sv * (3 - 2 * sv)
+        // front to back: 07 at the front
+        c.root.position.set(0, cy + j * stepY, -j * stepZ)
+        c.root.rotation.set(CARD_LEAN, 0, 0)
+        // rise along the card's own lean (never into its neighbours), then a touch forward
+        c.lift.position.set(0, up * CARD_RISE * fan, up * 0.05)
+        c.mat.roughness = lerp(0.3, 0.16, sv)
+        c.mat.envMapIntensity = lerp(0.9, 1.1, sv) * ENV
+        const show = smoothstep(0.35, 0.9, sv)
+        c.shotMat.opacity = show
+        c.shot.visible = show > 0.004
+        c.plaque.material.opacity = show * 0.78
+        c.plaque.mesh.visible = show > 0.004
       }
       gal.stackPoolMat.uniforms.uStrength.value = 0.2 + 0.25 * fan
       gal.stackPoolMat.uniforms.uTime.value = time * (reduced ? 0.08 : 0.35)
@@ -655,6 +712,12 @@ class Work implements Chapter {
     out.parallax = this.reduced ? 0 : 0.14
   }
 }
+
+/* the file of index cards: slot step (up, back) when fanned open, lean, and how far the current card rises */
+const CARD_STEP_Y = 0.03
+const CARD_STEP_Z = 0.14
+const CARD_LEAN = -0.16
+const CARD_RISE = 0.95
 
 /* studio turn: the value where the tall key strip crosses block 0's face, and the step per block */
 const TURN_C = -0.9

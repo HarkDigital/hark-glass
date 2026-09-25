@@ -140,7 +140,7 @@
 .stage-contact .ct-links {
   display: grid;
   grid-template-columns: repeat(3, max-content);
-  gap: 0 22px;
+  gap: 2px 22px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -214,7 +214,8 @@
   white-space: nowrap;
 }
 
-/* ---- fit levels (measured in hud.ts): short screens step the card down */
+/* ---- fit levels (measured in hud.ts): short screens step the card down.
+   The concept links never drop below a 24px-tall target (WCAG 2.5.8). */
 .stage-contact.ct-fit-1 .ct-title {
   font-size: clamp(2.8rem, 5vw, 5.4rem);
 }
@@ -256,7 +257,7 @@
 }
 .stage-contact.ct-fit-2 .ct-link {
   font-size: 13.5px;
-  line-height: 1.7;
+  line-height: 24px;
 }
 .stage-contact.ct-fit-2 .ct-foot {
   margin-top: 10px;
@@ -287,14 +288,15 @@
 }
 .stage-contact.ct-fit-3 .ct-link {
   font-size: 13px;
-  line-height: 1.6;
+  line-height: 24px;
 }
 .stage-contact.ct-fit-3 .ct-legal {
   font-size: 10px;
 }
 
-/* ---- portrait: the card runs along the bottom, the mark lives above it */
-@media (max-width: 767px), (max-aspect-ratio: 9/10) {
+/* ---- portrait: the card runs along the bottom, the mark lives above it
+   (short landscape phones stay side by side; keep in sync with PORTRAIT_QUERY) */
+@media (max-width: 767px) and (orientation: portrait), (max-width: 767px) and (min-height: 501px), (max-aspect-ratio: 9/10) {
   .stage-contact .ct-wrap {
     top: auto;
     left: var(--gutter);
@@ -360,11 +362,11 @@
     margin: 18px 0 10px;
   }
   .stage-contact .ct-links {
-    gap: 0 14px;
+    gap: 2px 14px;
   }
   .stage-contact .ct-link {
     font-size: 13.5px;
-    line-height: 1.75;
+    line-height: 24px;
   }
   .stage-contact .ct-foot {
     margin-top: 10px;
@@ -425,11 +427,11 @@
   .stage-contact .ct-links {
     display: flex;
     flex-wrap: wrap;
-    gap: 0 12px;
+    gap: 2px 12px;
   }
   .stage-contact .ct-link {
     font-size: 12.5px;
-    line-height: 1.6;
+    line-height: 24px;
   }
   .stage-contact .ct-foot {
     margin-top: 3px;
@@ -438,5 +440,38 @@
   .stage-contact .ct-legal {
     font-size: 9.5px;
     letter-spacing: 0.04em;
+  }
+}
+
+/* ---- the smallest landscape phones (≈667×375): one more step down so the
+   card sits between the chrome bands */
+@media (orientation: landscape) and (max-height: 500px) and (max-width: 740px) {
+  .stage-contact .ct-panel {
+    padding: 10px 16px 9px;
+  }
+  .stage-contact .ct-eyebrow,
+  .stage-contact .ct-title {
+    margin-bottom: 3px;
+  }
+  .stage-contact .ct-title {
+    font-size: clamp(1.6rem, 6.4vh, 2.1rem);
+  }
+  .stage-contact .ct-body {
+    font-size: 11.5px;
+    line-height: 1.36;
+    margin-bottom: 7px;
+  }
+  .stage-contact .ct-mail,
+  .stage-contact .ct-copy {
+    font-size: 13.5px;
+    padding-top: 7px;
+    padding-bottom: 7px;
+  }
+  .stage-contact .ct-more {
+    margin-top: 6px;
+  }
+  .stage-contact .ct-legal {
+    font-size: 9px;
+    letter-spacing: 0.02em;
   }
 }

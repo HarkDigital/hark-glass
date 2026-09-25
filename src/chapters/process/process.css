@@ -228,18 +228,22 @@
     line-height: 1.5;
   }
   .stage-process .pr-stats {
+    /* the value size, shared so every tile gets the same value column
+       ("10 years" is ~3.55em wide) and the labels line up */
+    --pr-v: clamp(1.9rem, 7.4vw, 2.6rem);
     grid-template-columns: minmax(0, 1fr);
     max-width: 560px;
     gap: 10px;
   }
   .stage-process .pr-tile {
-    grid-template-columns: minmax(84px, auto) minmax(0, 1fr);
+    grid-template-columns: calc(var(--pr-v) * 3.6) minmax(0, 1fr);
     align-items: center;
     gap: 16px;
     padding: 16px 18px;
   }
   .stage-process .pr-value {
-    font-size: clamp(1.9rem, 7.4vw, 2.6rem);
+    font-size: var(--pr-v);
+    white-space: nowrap;
   }
   .stage-process .pr-label {
     font-size: 13.5px;
@@ -277,13 +281,11 @@
     line-height: 1.45;
   }
   .stage-process .pr-stats {
+    --pr-v: 1.75rem;
     gap: 8px;
   }
   .stage-process .pr-tile {
     padding: 11px 14px;
-  }
-  .stage-process .pr-value {
-    font-size: 1.75rem;
   }
   .stage-process .pr-label {
     font-size: 12.5px;

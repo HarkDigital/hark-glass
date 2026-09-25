@@ -263,7 +263,8 @@ export class World {
     // coloured low panels: the brand green and cool accents
     panel(4, 2.2, '#00ff85', 1.6, [-5, -4, -6])
     panel(4, 2.2, '#29d9d0', 1.2, [6, -3.5, 5])
-    panel(5, 2.5, '#6f5cff', 1.2, [5, -2, -8])
+    // a soft violet (a saturated iris drew blue lines on the bevels)
+    panel(5, 2.5, '#8f8ad0', 0.8, [5, -2, -8])
     // rim ring behind the subject
     const ring = new THREE.Mesh(
       new THREE.TorusGeometry(4.2, 0.12, 8, 64),
@@ -362,7 +363,7 @@ export class World {
     this.first = false
 
     const calm = frame.reducedMotion ? 0.15 : 1
-    this.clock += frame.dt * 0.12 * c.flow * calm
+    if (!frame.still) this.clock += frame.dt * 0.12 * c.flow * calm
 
     const u = this.uniforms
     u.uA.value.copy(c.a)

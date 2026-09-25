@@ -100,6 +100,13 @@ export class Engine {
   private jump: { t: number; id: string; local: number; swapped: boolean } | null = null
   /** true while something (e.g. the rotate gate) covers the scene — skip rendering */
   paused = false
+  /**
+   * Ambient motion on/off (the chrome's Motion toggle). When off, frame.time
+   * holds still once the intro reveal has had time to play (3 s after
+   * 'hark:reveal'), freezing every chapter's idle animation.
+   */
+  motion = true
+  private revealAt = -1
   /** called when the GPU context is gone for good (main.ts shows the fallback) */
   onContextGone: (() => void) | null = null
   private listenerFailed = new WeakSet<object>()
@@ -637,7 +644,10 @@ export class Engine {
     const f = this.frame
     const raw = Math.max(this.timer.getDelta(), 0)
     f.dt = Math.min(raw, 1 / 20)
-    f.time += f.dt
+    if (this.revealAt < 0 && document.documentElement.dataset.ready === '1') this.revealAt = performance.now()
+    const idle = this.motion || this.revealAt < 0 || performance.now() - this.revealAt < 3000
+    if (idle) f.time += f.dt
+    f.still = !idle
     this.adaptResolution(Math.min(raw, 0.1), f.dt)
     f.pointer.x = damp(f.pointer.x, f.pointerRaw.x, 3.5, f.dt)
     f.pointer.y = damp(f.pointer.y, f.pointerRaw.y, 3.5, f.dt)

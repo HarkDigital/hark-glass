@@ -4,10 +4,10 @@ import { Callout, el, reveal, rise, setRise } from '../../core/dom'
 import { clamp, ease, lerp, rng, segment, smoothstep, window01 } from '../../core/math'
 import { nextFrame } from '../../core/yield'
 import { SECURITY, STATS } from '../../content'
-import { G, GLASS, edgeGlow, glass, glassLogo, smoothExtrude, type GlassLogo } from '../../kit/glass'
+import { G, glass, glassLogo, smoothExtrude, type GlassLogo } from '../../kit/glass'
 import { buildCracks, type V2 } from './crack'
 import { crackGeometry, crackMaterial, etchGeometry, etchMaterial, shapeOf, sheenMaterial, siteTexture } from './site'
-import { curvedSlab } from './slab'
+import { crestShape, curvedSlab, shieldLightMaterial } from './slab'
 import './shield.css'
 
 /*
@@ -17,25 +17,33 @@ import './shield.css'
  * into it (browser frame, nav, hero, a dashboard card, three feature cards).
  * The Hark mark hovers at its shoulder, the guardian.
  *
- *   0.00–0.08  IN       calm: cool light, a slow light sweep across the pane,
- *                       a glass status card pinned to the site: "All clear".
- *   0.08–0.30  BREACH   the light turns ember; a fracture grows from an impact
+ *   0.00–0.165 IN       calm: cool graphite light, a slow light sweep across
+ *                       the pane, a glass status card pinned to the site:
+ *                       "All clear". It holds (the 'before') until the impact.
+ *   0.165–0.29 BREACH   the light turns ember; a fracture grows from an impact
  *                       point (spider → rays → ring → branches), hot at its
  *                       front; a little heat shimmer; the status card turns
  *                       "Intrusion detected". The camera leans in.
- *   0.30–0.60  BREATHE  a frost focus-pull, and the cracked pane parts into
+ *   0.29–0.58  BREATHE  a frost focus-pull, and the cracked pane parts into
  *                       seven slow glass shards (an exploded view in depth)
- *                       while the red drains out. 'Hacked? Breathe.' comes
- *                       into focus with the eyebrow and body (settled at the
- *                       0.45 landing).
- *   0.60–0.95  TEMPERED the shards glide back and re-seat, their seams light
+ *                       while the red drains out and the camera pulls back.
+ *                       Then 'Hacked? Breathe.' comes into focus with the
+ *                       eyebrow and body (settled at the 0.45 landing).
+ *   0.52–0.72  HEAL     the shards glide back and re-seat, their seams light
  *                       signal green, then the light retracts along the
- *                       cracks into the impact point: the glass heals. A thick
- *                       curved shield of tempered glass slides in front of the
- *                       site on a light sweep; cool mint light; 24/7 + label +
- *                       the emergency CTA (anchor 0.8).
+ *                       cracks into the impact point: the glass heals. 24/7 +
+ *                       label + the emergency CTA take over from 'Hacked?
+ *                       Breathe.' as it starts (0.57), so no stretch is bare.
+ *   0.665–0.95 TEMPERED a crest of tempered glass, its own object, rises in
+ *                       front of the site with an air gap; a rim light sweeps
+ *                       across it as it settles (anchor 0.8: in place). Clear
+ *                       graphite studio, deep teal and dim mint pools, no
+ *                       strips across the site; emerald only on the seams,
+ *                       the status gem, the mark's core and the CTA.
  *   0.95–1.00  OUT      still.
  *
+ * Timings are fractions of the chapter, so they hold at any chapter length
+ * (the 'All clear' hold is ~0.24 vh at 1.7 vh, ~0.3 vh at 2.1 vh).
  * Everything derives from `local`; frame.time only drives idle float.
  */
 
@@ -51,21 +59,31 @@ const IMPACT: V2 = [0.3, 0.2]
 const STAT = STATS.find(s => s.value === '24/7') ?? STATS[STATS.length - 1]
 
 const T = {
-  impact: 0.075,
-  grown: 0.265,
-  split: 0.282,
+  /** the healthy site holds ('All clear') until here */
+  impact: 0.165,
+  grown: 0.283,
+  split: 0.292,
   /** shards part */
-  part0: 0.286,
-  part1: 0.5,
+  part0: 0.296,
+  part1: 0.49,
+  /** the camera has pulled back from the crack: copy may come in */
+  clear: 0.372,
+  /** copy A hands over to copy B (24/7) as the shards re-seat */
+  handoff: 0.57,
   /** shards glide back */
-  seat0: 0.555,
-  seat1: 0.66,
+  seat0: 0.522,
+  seat1: 0.61,
   /** seated: back to one pane, the green light retracts along the cracks */
-  heal: 0.664,
-  healed: 0.79,
-  shield0: 0.7,
-  shield1: 0.87,
+  heal: 0.614,
+  healed: 0.72,
+  /** the crest rises into place (settled by the 0.8 anchor), a light sweeps it */
+  shield0: 0.665,
+  shield1: 0.8,
+  sweep0: 0.69,
+  sweep1: 0.8,
 }
+/** the crest's centre stands this far in front of the site (the air gap) */
+const SHIELD_Z = 1.05
 
 /** long, settling ease-out (≈ cubic-bezier(0.16, 1, 0.3, 1)) */
 const outQuart = (t: number) => 1 - Math.pow(1 - clamp(t), 4)
@@ -81,6 +99,9 @@ interface Mood {
   strip: THREE.Color
   glow: number
   strips: number
+  /** strip height and per-strip mask: short and aside when the site is at rest */
+  stripH: number
+  mask: THREE.Vector3
   env: number
   /** etched site: neutral lines and accents (linear) */
   neutral: THREE.Color
@@ -97,6 +118,8 @@ const mood = (
   strip: string,
   glow: number,
   strips: number,
+  stripH: number,
+  mask: [number, number, number],
   env: number,
   neutral: THREE.Color,
   accent: THREE.Color,
@@ -109,26 +132,29 @@ const mood = (
   strip: new THREE.Color(strip),
   glow,
   strips,
+  stripH,
+  mask: new THREE.Vector3(...mask),
   env,
   neutral,
   accent,
 })
 
 const MOODS: Mood[] = [
-  // IN: a cool, quiet studio
-  mood(G.aqua, G.iris, '#12304a', '#3a1636', '#05070c', '#eafff5', 0.82, 0.85, 1.15, lin(0.5, 0.56, 0.6), new THREE.Color(G.signal).multiplyScalar(0.85)),
-  // BREACH: ember behind the site, the rest of the room stays dark
-  mood(G.ember, '#b8321c', '#3a0916', '#4a0f24', '#0b0607', '#ffcfc0', 0.9, 0.55, 1.0, lin(0.46, 0.36, 0.34), lin(1.0, 0.16, 0.1)),
-  // BREATHE: deep iris, calm
-  mood(G.iris, '#1d6a86', '#1b1450', '#35143c', '#05070c', '#e6eeff', 0.8, 0.7, 1.15, lin(0.46, 0.5, 0.6), lin(0.36, 0.3, 0.9)),
-  // TEMPERED: signal and deep teal
-  mood(G.signal, '#0e7a66', '#0f2c48', '#241e66', '#040809', '#eafff5', 0.78, 0.85, 1.3, lin(0.52, 0.6, 0.58), new THREE.Color(G.signal)),
+  // IN: a cool, quiet graphite studio; two short soft glows beside the site's centre
+  mood('#2a95a0', '#4e44b8', '#11263c', '#241a38', '#07090b', '#f2f8fb', 0.7, 0.45, 0.42, [0.4, 0, 0.75], 1.15, lin(0.5, 0.55, 0.6), new THREE.Color(G.signal).multiplyScalar(0.85)),
+  // BREACH: ember behind the site, the rest of the room stays dark; the strips are the alarm
+  mood(G.ember, '#b8321c', '#3a0916', '#4a0f24', '#0b0607', '#ffcfc0', 0.9, 0.55, 0.75, [1, 0.7, 1], 1.0, lin(0.46, 0.36, 0.34), lin(1.0, 0.16, 0.1)),
+  // BREATHE: deep iris, calm; full strips bend through the gaps between the shards
+  mood(G.iris, '#1d6a86', '#1b1450', '#35143c', '#05070c', '#e6eeff', 0.8, 0.7, 0.85, [1, 1, 1], 1.15, lin(0.46, 0.5, 0.6), lin(0.36, 0.3, 0.9)),
+  // TEMPERED: clear graphite, a deep teal pool and a dim mint one; no strips across the healed site
+  mood('#4a707b', '#5e6c66', '#303133', '#302f33', '#0c0d0e', '#f2f7fa', 0.52, 0, 0.5, [0, 0, 0], 1.3, lin(0.54, 0.58, 0.62), new THREE.Color(G.signal).multiplyScalar(0.9)),
 ]
 
 function moodWeights(l: number, out: number[]) {
-  const s1 = smoothstep(0.065, 0.16, l)
-  const s2 = smoothstep(0.285, 0.42, l)
-  const s3 = smoothstep(0.56, 0.7, l)
+  // the ember floods in with the impact, not before it: 'All clear' stays cool
+  const s1 = smoothstep(T.impact - 0.004, T.impact + 0.07, l)
+  const s2 = smoothstep(0.29, 0.42, l)
+  const s3 = smoothstep(0.55, 0.7, l)
   out[0] = 1 - s1
   out[1] = s1 * (1 - s2)
   out[2] = s2 * (1 - s3)
@@ -180,36 +206,40 @@ interface Key {
   fill: number
 }
 
+// the pull-back after the breach finishes by T.clear, before the copy comes in
 const KEYS: Key[] = [
   { l: 0.0, s: [0.36, 0.08, 0.1], sw: 5.1, sh: 2.75, yaw: -0.22, pitch: 0.07, reg: 0, fill: 0.84 },
-  { l: 0.075, s: [0.34, 0.08, 0.1], sw: 4.9, sh: 2.65, yaw: -0.17, pitch: 0.06, reg: 0, fill: 0.86 },
-  { l: 0.28, s: [0.42, 0.12, 0.05], sw: 4.6, sh: 2.75, yaw: -0.08, pitch: 0.04, reg: 0, fill: 0.94 },
-  { l: 0.42, s: [0.32, 0.06, 0.35], sw: 5.2, sh: 3.3, yaw: -0.4, pitch: 0.09, reg: 1, fill: 1.06 },
-  { l: 0.555, s: [0.32, 0.06, 0.35], sw: 5.1, sh: 3.25, yaw: -0.46, pitch: 0.1, reg: 1, fill: 1.06 },
-  { l: 0.8, s: [0.42, 0.1, 0.4], sw: 4.9, sh: 2.95, yaw: -0.24, pitch: 0.06, reg: 2, fill: 0.92 },
-  { l: 1.0, s: [0.42, 0.1, 0.4], sw: 4.7, sh: 2.85, yaw: -0.17, pitch: 0.05, reg: 2, fill: 0.92 },
+  { l: T.impact, s: [0.34, 0.08, 0.1], sw: 4.95, sh: 2.68, yaw: -0.17, pitch: 0.06, reg: 0, fill: 0.86 },
+  { l: T.split, s: [0.42, 0.12, 0.05], sw: 4.6, sh: 2.75, yaw: -0.08, pitch: 0.04, reg: 0, fill: 0.94 },
+  { l: T.clear, s: [0.32, 0.06, 0.35], sw: 5.2, sh: 3.3, yaw: -0.4, pitch: 0.09, reg: 1, fill: 1.06 },
+  { l: T.seat0, s: [0.32, 0.06, 0.35], sw: 5.1, sh: 3.25, yaw: -0.46, pitch: 0.1, reg: 1, fill: 1.06 },
+  // at rest: the crest (3.9 x 3.5, its point below the pane) and the mark at its shoulder
+  { l: 0.8, s: [0.36, -0.12, 0.75], sw: 4.75, sh: 4.05, yaw: -0.27, pitch: 0.06, reg: 2, fill: 0.93 },
+  { l: 1.0, s: [0.36, -0.12, 0.75], sw: 4.6, sh: 3.95, yaw: -0.2, pitch: 0.05, reg: 2, fill: 0.93 },
 ]
 
 /** portrait: the mark rides above the pane's shoulder, so the pane can fill the width */
 const KEYS_TALL: Key[] = [
   { l: 0.0, s: [0.02, 0.32, 0.1], sw: 3.75, sh: 3.3, yaw: -0.2, pitch: 0.07, reg: 0, fill: 0.9 },
-  { l: 0.075, s: [0.02, 0.32, 0.1], sw: 3.7, sh: 3.2, yaw: -0.16, pitch: 0.06, reg: 0, fill: 0.92 },
-  { l: 0.28, s: [0.1, 0.22, 0.05], sw: 3.5, sh: 2.95, yaw: -0.08, pitch: 0.04, reg: 0, fill: 0.96 },
-  { l: 0.42, s: [0.06, 0.24, 0.35], sw: 4.9, sh: 3.9, yaw: -0.26, pitch: 0.08, reg: 1, fill: 1.0 },
-  { l: 0.555, s: [0.06, 0.24, 0.35], sw: 4.8, sh: 3.85, yaw: -0.3, pitch: 0.09, reg: 1, fill: 1.0 },
-  { l: 0.8, s: [0.02, 0.3, 0.4], sw: 3.95, sh: 3.35, yaw: -0.22, pitch: 0.06, reg: 2, fill: 0.95 },
-  { l: 1.0, s: [0.02, 0.3, 0.4], sw: 3.85, sh: 3.25, yaw: -0.16, pitch: 0.05, reg: 2, fill: 0.95 },
+  { l: T.impact, s: [0.02, 0.32, 0.1], sw: 3.7, sh: 3.2, yaw: -0.16, pitch: 0.06, reg: 0, fill: 0.92 },
+  { l: T.split, s: [0.1, 0.22, 0.05], sw: 3.5, sh: 2.95, yaw: -0.08, pitch: 0.04, reg: 0, fill: 0.96 },
+  { l: T.clear, s: [0.06, 0.24, 0.35], sw: 4.9, sh: 3.9, yaw: -0.26, pitch: 0.08, reg: 1, fill: 1.0 },
+  { l: T.seat0, s: [0.06, 0.24, 0.35], sw: 4.8, sh: 3.85, yaw: -0.3, pitch: 0.09, reg: 1, fill: 1.0 },
+  { l: 0.8, s: [0.04, 0.16, 0.7], sw: 4.15, sh: 4.55, yaw: -0.22, pitch: 0.06, reg: 2, fill: 0.95 },
+  { l: 1.0, s: [0.04, 0.16, 0.7], sw: 4.05, sh: 4.45, yaw: -0.16, pitch: 0.05, reg: 2, fill: 0.95 },
 ]
 
 /** studio turn keys: light sweeps run across the pane, the shards, the shield */
 const TURN: [number, number][] = [
-  [0.0, 0.35],
-  [0.12, -0.05],
-  [0.28, -0.12],
-  [0.54, 0.55],
-  [0.7, -0.75],
-  [0.9, 0.42],
-  [1.0, 0.5],
+  [0.0, 0.4],
+  [T.impact, -0.08],
+  [0.29, -0.12],
+  [0.53, 0.55],
+  // the crest arrives on a sweep of the studio's strips; it settles where no
+  // coloured low panel reflects across it
+  [0.68, 1.35],
+  [0.84, 0.45],
+  [1.0, 0.52],
 ]
 function envTurn(l: number) {
   for (let i = 0; i < TURN.length - 1; i++) {
@@ -327,7 +357,7 @@ export default function create(): Chapter {
   let etchMat: THREE.ShaderMaterial | null = null
   let sheenMat: THREE.ShaderMaterial | null = null
   let crackMat: THREE.ShaderMaterial | null = null
-  let rimMat: THREE.ShaderMaterial | null = null
+  let lightMat: THREE.ShaderMaterial | null = null
 
   // DOM
   let status: Callout | null = null
@@ -346,6 +376,7 @@ export default function create(): Chapter {
   const colD = new THREE.Color()
   const colBase = new THREE.Color()
   const colStrip = new THREE.Color()
+  const mask = new THREE.Vector3()
   const scratch: CameraPose = { position: new THREE.Vector3(), target: new THREE.Vector3(), fov: 30, roll: 0, parallax: 0 }
   const impactW = new THREE.Vector3()
   const q1 = new THREE.Quaternion()
@@ -476,18 +507,22 @@ export default function create(): Chapter {
       group.add(logo.root)
       await nextFrame()
 
-      // ---------------- the shield: tempered glass, curved
-      const slab = curvedSlab(W + 0.46, H + 0.42, {
-        radius: 0.3,
+      // ---------------- the shield: a convex crest of tempered glass, its own object
+      const slab = curvedSlab(crestShape(), {
         depth: 0.16,
         bevel: 0.07,
-        bendX: 4.4,
-        bendY: 9,
+        bendX: 3.8,
+        bendY: 7,
+        cy: -0.3,
         maxEdge: mobile ? 0.22 : 0.15,
         bevelSegments: mobile ? 4 : 7,
       })
-      rimMat = edgeGlow(G.mint, 3, 0)
-      shield.add(new THREE.Mesh(slab, GLASS.ice()), new THREE.Mesh(slab, rimMat))
+      // clear, faintly cool float glass (not a green slab); sharp, so the site reads through it
+      const crestMat = glass({ tint: '#e6f3f6', tintDistance: 3.2, thickness: 0.9, ior: 1.5, dispersion: 0.3, env: 1.2, coat: 0.6, sharp: true })
+      lightMat = shieldLightMaterial()
+      ;(lightMat.uniforms.uColor.value as THREE.Color).setRGB(0.82, 0.92, 1.0)
+      ;(lightMat.uniforms.uSweepColor.value as THREE.Color).setRGB(0.88, 1.0, 0.95)
+      shield.add(new THREE.Mesh(slab, crestMat), new THREE.Mesh(slab, lightMat))
     },
 
     update(l: number, frame: Frame, ctx: ChapterContext) {
@@ -505,6 +540,10 @@ export default function create(): Chapter {
       wp.stripColor = mixC(colStrip, m => m.strip, wts)
       wp.glow = mixN(m => m.glow, wts)
       wp.strips = mixN(m => m.strips, wts)
+      wp.stripHeight = mixN(m => m.stripH, wts)
+      mask.set(0, 0, 0)
+      for (let i = 0; i < MOODS.length; i++) if (wts[i] > 0) mask.addScaledVector(MOODS[i].mask, wts[i])
+      wp.stripMask.copy(mask)
       wp.env = mixN(m => m.env, wts)
       wp.flow = 1 - 0.4 * wts[2]
       const reg = solvePose(l, frame, layout, scratch)
@@ -518,9 +557,9 @@ export default function create(): Chapter {
 
       // ---------------- post
       const pp = ctx.post.params
-      pp.glitch = rm ? 0 : 0.16 * window01(l, 0.1, 0.32, 0.07)
-      pp.frost = (rm ? 0.08 : 0.15) * Math.min(smoothstep(0.268, 0.29, l), 1 - smoothstep(0.3, 0.36, l))
-      const healGlow = window01(l, 0.58, 0.8, 0.06)
+      pp.glitch = rm ? 0 : 0.16 * window01(l, T.impact, 0.33, 0.06)
+      pp.frost = (rm ? 0.08 : 0.15) * Math.min(smoothstep(T.split - 0.014, T.split + 0.006, l), 1 - smoothstep(0.31, 0.365, l))
+      const healGlow = window01(l, 0.58, 0.78, 0.06)
       pp.bloomStrength = 0.44 + 0.16 * wts[1] + 0.1 * healGlow
       pp.vignette = 0.28 + 0.08 * wts[1]
 
@@ -545,7 +584,7 @@ export default function create(): Chapter {
       if (intactSheen) intactSheen.visible = !split
       // part in slow motion (a long ease-out, then a slow drift), glide back
       const apart =
-        (0.84 * outQuart(segment(l, T.part0, T.part1)) + 0.16 * segment(l, 0.42, T.seat0)) *
+        (0.84 * outQuart(segment(l, T.part0, T.part1)) + 0.16 * segment(l, 0.41, T.seat0)) *
         (1 - ease.inOutCubic(segment(l, T.seat0, T.seat1)))
       const linesOn = l > T.impact && l < T.healed
       for (const s of shards) {
@@ -570,12 +609,12 @@ export default function create(): Chapter {
         let grow = l < T.impact ? -0.01 : ease.outQuad(segment(l, T.impact, T.grown)) * 1.14
         if (l >= T.heal) grow = 1.14 * (1 - ease.inOutQuad(segment(l, T.heal, T.healed)))
         u.uGrow.value = grow
-        const cool = smoothstep(0.285, 0.4, l)
-        const green = smoothstep(0.575, 0.655, l)
+        const cool = smoothstep(T.split, 0.4, l)
+        const green = smoothstep(T.seat0 + 0.03, T.heal - 0.004, l)
         const col = u.uColor.value as THREE.Color
         col.copy(EMBER).lerp(COOL, cool).lerp(HEAL, green)
         u.uIntensity.value = lerp(lerp(1.6, 0.3, cool), 1.9, green)
-        u.uHead.value = Math.max(1 - smoothstep(0.26, 0.3, l), smoothstep(T.heal - 0.01, T.heal + 0.01, l))
+        u.uHead.value = Math.max(1 - smoothstep(T.grown - 0.02, T.grown + 0.012, l), smoothstep(T.heal - 0.01, T.heal + 0.01, l))
         ;(u.uHot.value as THREE.Color).copy(l < 0.5 ? HOT_BREACH : HOT_HEAL)
       }
 
@@ -583,26 +622,34 @@ export default function create(): Chapter {
       if (logo && coreMat) {
         const tall = isTall(frame)
         const w01 = wts[0] + wts[1]
-        const bx = tall ? 1.05 * w01 + 1.2 * wts[2] + 1.15 * wts[3] : 2.12 * w01 + 2.42 * wts[2] + 2.18 * wts[3]
-        const by = tall ? 1.55 * w01 + 1.78 * wts[2] + 1.6 * wts[3] : 0.92 * w01 + 1.12 * wts[2] + 1.02 * wts[3]
-        const bz = 0.5 * w01 + 0.2 * wts[2] + 1.02 * wts[3]
+        // at rest it stands clear of the crest's silhouette (glass doesn't see glass)
+        const bx = tall ? 1.05 * w01 + 1.2 * wts[2] + 1.22 * wts[3] : 2.12 * w01 + 2.42 * wts[2] + 2.3 * wts[3]
+        const by = tall ? 1.55 * w01 + 1.78 * wts[2] + 2.02 * wts[3] : 0.92 * w01 + 1.12 * wts[2] + 1.58 * wts[3]
+        const bz = 0.5 * w01 + 0.2 * wts[2] + 1.3 * wts[3]
         logo.root.position.set(bx, by + 0.04 * Math.sin(t * 0.7), bz)
         const face = -0.42 * wts[1] - 0.15 * wts[2]
         logo.root.rotation.set(0.07 * Math.sin(t * 0.45), face + 0.35 * Math.sin(t * 0.3), 0.04 * Math.sin(t * 0.37))
-        const lock = smoothstep(0.84, 0.92, l)
-        coreMat.emissiveIntensity = 2.4 + 1.1 * lock
+        const lock = smoothstep(0.74, 0.82, l)
+        coreMat.emissiveIntensity = 2.4 + 0.6 * lock
       }
 
-      // ---------------- the shield
+      // ---------------- the shield: the crest rises into place in front of the site
       const sIn = outQuart(segment(l, T.shield0, T.shield1))
       shield.visible = l > T.shield0
-      shield.position.set(lerp(6.2, 0, sIn), 0.015 * Math.sin(t * 0.5) * sIn, lerp(1.3, 0.62, sIn))
-      shield.rotation.set(0, lerp(-0.62, 0, sIn), 0)
-      if (rimMat) rimMat.uniforms.uStrength.value = 0.55 * smoothstep(0.84, 0.92, l)
+      shield.position.set(0, lerp(-4.6, 0, sIn) + 0.015 * Math.sin(t * 0.5) * sIn, lerp(2.4, SHIELD_Z, sIn))
+      shield.rotation.set(lerp(0.55, 0, sIn), lerp(-0.22, 0, sIn), 0)
+      if (lightMat) {
+        const u = lightMat.uniforms
+        // one sweep across the crest as it settles, then a quiet rim
+        const sw = segment(l, T.sweep0, T.sweep1)
+        u.uSweep.value = lerp(-2.7, 2.5, ease.inOutQuad(sw))
+        u.uBand.value = Math.sin(Math.PI * sw) * (rm ? 0.35 : 1)
+        u.uRim.value = 0.1 + 0.32 * smoothstep(0.7, 0.8, l)
+      }
 
       // ---------------- DOM
       if (status) {
-        const breach = l >= T.impact + 0.012
+        const breach = l >= T.impact + 0.008
         if (breach !== wasBreach) {
           status.root.classList.toggle('is-breach', breach)
           wasBreach = breach
@@ -613,12 +660,14 @@ export default function create(): Chapter {
         status.offset.y = short ? -34 : -58
         group.updateMatrixWorld(true)
         impactW.set(IMPACT[0], IMPACT[1], FRONT).applyMatrix4(site.matrixWorld)
-        status.update(impactW, ctx.camera, frame.width, frame.height, window01(l, 0.045, 0.31, 0.035))
+        status.update(impactW, ctx.camera, frame.width, frame.height, window01(l, 0.045, 0.3, 0.03))
       }
-      reveal(copyA, window01(l, 0.31, 0.575, 0.05))
-      setRise(title, l > 0.305 && l < 0.56)
-      reveal(copyB, window01(l, 0.655, 0.955, 0.04))
-      setRise(stat, l > 0.65 && l < 0.945)
+      // copy A waits for the pull-back (never over the close, cracked pane);
+      // copy B arrives with the heal, so there is no stretch without copy
+      reveal(copyA, window01(l, T.clear - 0.022, T.handoff, 0.035))
+      setRise(title, l > T.clear - 0.027 && l < T.handoff - 0.008)
+      reveal(copyB, window01(l, T.handoff, 0.955, 0.03))
+      setRise(stat, l > T.handoff - 0.004 && l < 0.945)
     },
 
     camera(l: number, frame: Frame, out: CameraPose) {

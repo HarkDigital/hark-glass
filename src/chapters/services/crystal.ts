@@ -103,7 +103,8 @@ const BACKDROP_FRAG = /* glsl */ `
       float b = exp(-((p.x - cx) * (p.x - cx)) / (w * w));
       spec += hue(fi / 7.0 + 0.02) * b;
     }
-    col += spec * band * exp(-dot(q, q) * 1.2) * uSpectrum * 0.6;
+    // shorter than the ruled lines: a flare behind the glass that fades before the chrome
+    col += spec * exp(-(p.y * p.y) / 3.0) * exp(-dot(q, q) * 1.2) * uSpectrum * 0.6;
     gl_FragColor = vec4(col, 1.0);
   }
 `

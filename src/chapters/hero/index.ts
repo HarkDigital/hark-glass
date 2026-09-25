@@ -65,7 +65,7 @@ const LAND: Record<'intro' | 'lens' | 'pay' | 'out', Shot> = {
 }
 const PORT: Record<'intro' | 'lens' | 'pay' | 'out', Shot> = {
   intro: { sx: 0.0, sy: 0.3, hf: 0.3, wf: 0.66, elev: 0.2, fov: 38, spread: 0.85, sats: 0.62, lift: 0 },
-  lens: { sx: 0.0, sy: 0.2, hf: 0.3, wf: 0.66, elev: 0.1, fov: 38, spread: 0.95, sats: 0.7, lift: 0.4 },
+  lens: { sx: 0.0, sy: 0.12, hf: 0.3, wf: 0.66, elev: 0.1, fov: 38, spread: 0.95, sats: 0.7, lift: 0.4 },
   pay: { sx: 0.0, sy: 0.33, hf: 0.29, wf: 0.64, elev: 0.17, fov: 38, spread: 0.85, sats: 0.62, lift: 0 },
   out: { sx: 0.0, sy: 0.2, hf: 1.6, wf: 1.9, elev: 0.06, fov: 34, spread: 1.4, sats: 0.62, lift: 0 },
 }
@@ -79,8 +79,88 @@ export default function create(): Chapter {
   // DOM
   let intro: HTMLElement
   let payoff: HTMLElement
+  let payoffInner: HTMLElement
   let title: HTMLElement
   const callouts: Callout[] = []
+  // the exploded parts the callouts point at, and their resting centres (filled in init)
+  const parts: THREE.Object3D[] = []
+  const centres: THREE.Vector3[] = []
+
+  // the copy's text boxes in NDC (right, top, bottom; intro then payoff), measured on
+  // resize / once the font is in: on landscape the etched word keeps clear of them
+  const MAXB = 48
+  const boxes = new Float32Array(MAXB * 3 * 2)
+  let nIntro = 0
+  let nPay = 0
+  let copyW = -1
+  let copyH = -1
+  let copyFonts = false
+  let fontsIn = false
+  const range = document.createRange()
+  // every run of text, trimmed from its font box to roughly its glyphs (cap height to
+  // descender), plus the buttons
+  const collect = (root: HTMLElement, off: number, w: number, h: number) => {
+    let n = 0
+    const push = (r: DOMRect, inTop: number, inBottom: number) => {
+      if (n >= MAXB || r.width < 1 || r.height < 1) return
+      const o = (off + n++) * 3
+      boxes[o] = (r.right / w) * 2 - 1
+      boxes[o + 1] = 1 - ((r.top + r.height * inTop) / h) * 2
+      boxes[o + 2] = 1 - ((r.bottom - r.height * inBottom) / h) * 2
+    }
+    const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+    for (let t = walk.nextNode(); t; t = walk.nextNode()) {
+      if (!t.textContent?.trim()) continue
+      range.selectNodeContents(t)
+      for (const r of range.getClientRects()) push(r, 0.16, 0.1)
+    }
+    for (const b of root.querySelectorAll('.hud-btn')) push(b.getBoundingClientRect(), 0, 0)
+    return n
+  }
+  const measureCopy = (w: number, h: number) => {
+    if (w === copyW && h === copyH && fontsIn === copyFonts) return
+    copyW = w
+    copyH = h
+    copyFonts = fontsIn
+    nIntro = collect(intro, 0, Math.max(1, w), Math.max(1, h))
+    nPay = collect(payoffInner, MAXB, Math.max(1, w), Math.max(1, h))
+  }
+  /** the copy's right edge (plus a gap) beside the band y0..y1, blended intro → payoff */
+  let payMix = 0
+  let gap = 0
+  let padY = 0
+  let rampY = 0
+  const edgeAt = (y0: number, y1: number) =>
+    lerp(copyEdge(0, nIntro, y0, y1, padY, rampY), copyEdge(MAXB, nPay, y0, y1, padY, rampY), payMix) + gap
+  /**
+   * Project a rig-space point (rig turned by `ra` about y) with this frame's camera
+   * (pos / tmpF / tmpR / tmpU): NDC x/y, view depth, and NDC x per unit of rig x.
+   */
+  const pr = { x: 0, y: 0, depth: 1, gx: 1 }
+  const project = (x: number, y: number, z: number, ra: number, tanV: number, aspect: number) => {
+    const c = Math.cos(ra)
+    const s = Math.sin(ra)
+    tmpW.set(x * c + z * s, y, -x * s + z * c).sub(pos)
+    pr.depth = Math.max(0.1, tmpW.dot(tmpF))
+    pr.x = tmpW.dot(tmpR) / (pr.depth * tanV * aspect)
+    pr.y = tmpW.dot(tmpU) / (pr.depth * tanV)
+    pr.gx = Math.max(0.2, c * tmpR.x - s * tmpR.z) / (pr.depth * tanV * aspect)
+    return pr
+  }
+  /**
+   * Right edge (NDC) of the copy lines that share the band y0..y1 (NDC, y up), padded by
+   * `pad` (NDC). A line counts in proportion to how far it reaches into the padded band
+   * (over `ramp`), so the edge never jumps as the band slides past a line.
+   */
+  const copyEdge = (off: number, n: number, y0: number, y1: number, pad: number, ramp: number) => {
+    let e = -1.6
+    for (let i = 0; i < n; i++) {
+      const o = (off + i) * 3
+      const into = Math.min(y1 + pad, boxes[o + 1]) - Math.max(y0 - pad, boxes[o + 2])
+      if (into > 0) e = Math.max(e, lerp(-1.6, boxes[o], smoothstep(0, ramp, into)))
+    }
+    return e
+  }
 
   // reveal clock (performance time, seconds)
   let revealAt = -1
@@ -127,6 +207,8 @@ export default function create(): Chapter {
       const stage = buildStage(mobile)
       set = { ...mark, ...stage }
       for (const s of set.sats) s.rot = s.mesh.rotation.clone()
+      parts.push(set.logo.loopA, set.logo.core, set.logo.loopB)
+      centres.push(set.centres.loopA, set.centres.core, set.centres.loopB)
       group.add(set.pivot, set.plinth, set.poolUnder, set.poolTop, set.rig)
 
       // ---- DOM
@@ -138,7 +220,7 @@ export default function create(): Chapter {
       el('span', '', MICROCOPY.scrollHint, hint)
 
       payoff = el('div', 'hg-payoff', undefined, ctx.stage)
-      const inner = el('div', 'hg-payoff-inner', undefined, payoff)
+      const inner = (payoffInner = el('div', 'hg-payoff-inner', undefined, payoff))
       el('p', 'hud-label hg-locale', BRAND.locale, inner)
       title = rise(el('h1', 'hud-title hg-title', undefined, inner), 'Make the internet <em>listen.</em>')
       const ctas = el('div', 'hg-ctas', undefined, inner)
@@ -155,13 +237,21 @@ export default function create(): Chapter {
 
       // the exploded view names its parts
       const labels = ['Glass loop · 01', 'Signal core', 'Glass loop · 02']
-      const sides: ('left' | 'right')[] = ['right', 'left', 'left']
+      // loop 02's label drops below-right of its loop, so it never lands on the core
+      const sides: ('left' | 'right')[] = ['right', 'left', 'right']
+      const dy = [-46, 54, 64]
       for (let i = 0; i < 3; i++) {
-        const c = new Callout(ctx.stage, { side: sides[i], offset: { x: mobile ? 34 : 70, y: i === 1 ? 54 : -46 } })
+        const c = new Callout(ctx.stage, { side: sides[i], offset: { x: mobile ? 34 : 70, y: dy[i] } })
         c.label.textContent = labels[i]
         c.root.classList.add('hg-callout')
         callouts.push(c)
       }
+
+      document.fonts?.ready
+        .then(() => {
+          fontsIn = true
+        })
+        .catch(() => {})
 
       const onReveal = () => {
         if (revealAt < 0) revealAt = now()
@@ -195,7 +285,11 @@ export default function create(): Chapter {
       const theta = orbitP * ORBIT
       const tanV = Math.tan(THREE.MathUtils.degToRad(shot.fov / 2))
       const size = MARK_S * 1.02
-      const d = Math.max(size / (shot.hf * 2 * tanV), size / (shot.wf * 2 * tanV * aspect))
+      // exploded view: 0 at rest, 1 fully apart
+      const ex = sm(local, 0.12, 0.3) * (1 - sm(local, 0.4, 0.53))
+      // on portrait the fit is width-bound, and the exploded, turned stack (loops at ±z,
+      // fanned, seen at a ~55° three-quarter) is far wider than the assembled mark
+      const d = Math.max(size / (shot.hf * 2 * tanV), size / (shot.wf * 2 * tanV * aspect)) * (portrait ? 1 + 0.3 * ex : 1)
       tgt.set(0, MARK_Y + shot.lift, 0)
       const ce = Math.cos(shot.elev)
       pos.set(Math.sin(theta) * ce, Math.sin(shot.elev), Math.cos(theta) * ce).multiplyScalar(d).add(tgt)
@@ -216,7 +310,6 @@ export default function create(): Chapter {
       const face = sm(local, 0.22, 0.6) * ORBIT
       set.pivot.rotation.set(0.04 * Math.sin(t * 0.37 * calm) * (1 - lensW), face + sway, 0.025 * Math.sin(t * 0.29 * calm))
       set.pivot.position.y = MARK_Y + shot.lift + 0.046 * Math.sin(t * 0.9 * calm)
-      const ex = sm(local, 0.12, 0.3) * (1 - sm(local, 0.4, 0.53))
       const { loopA, loopB, core } = set.logo
       // exploded view: loop A forward, loop B back, the core between; the loops fan a little
       loopA.position.z = 0.38 * ex
@@ -228,35 +321,84 @@ export default function create(): Chapter {
       const coreScale = 1 + 0.12 * ex
       core.scale.setScalar(coreScale)
 
+      // ---- where the copy is (landscape): the etch and the satellites keep clear of it
+      payMix = sm(local, 0.43, 0.64)
+      const present = portrait ? 0 : Math.max(1 - sm(local, 0.06, 0.2), sm(local, 0.45, 0.62))
+      if (present > 0) measureCopy(frame.width, frame.height)
+      gap = 80 / Math.max(1, frame.width) // 40px beside the copy, in NDC
+      padY = 24 / Math.max(1, frame.height) // and 12px above / below its glyphs
+      rampY = 8 / Math.max(1, frame.height)
+
       // ---- the rig (backdrop + satellites) follows the orbit with a lag: parallax
       const lag = Math.sin(Math.PI * orbitP)
-      set.rig.rotation.y = theta - 0.5 * lag
+      const ra = theta - 0.5 * lag
+      set.rig.rotation.y = ra
       for (const s of set.sats) {
-        s.mesh.position.copy(s.base)
-        s.mesh.position.x *= shot.sats
-        s.mesh.position.y += s.bob * Math.sin(t * 0.6 * calm + s.phase)
-        s.mesh.position.x += 0.03 * Math.sin(t * 0.4 * calm + s.phase * 2)
+        const p = s.mesh.position.copy(s.base)
+        p.x *= shot.sats
+        p.y += s.bob * Math.sin(t * 0.6 * calm + s.phase)
+        p.x += 0.03 * Math.sin(t * 0.4 * calm + s.phase * 2)
         s.mesh.rotation.set(s.rot.x + s.spin.x * t * calm, s.rot.y + s.spin.y * t * calm, s.rot.z + s.spin.z * t * calm)
+        // a satellite on the copy side slides right until it clears the copy lines beside it
+        if (present > 0 && s.base.x < 0) {
+          const q = project(p.x, p.y, p.z, ra, tanV, aspect)
+          const rx = s.radius / (q.depth * tanV * aspect)
+          const ry = s.radius / (q.depth * tanV)
+          const over = edgeAt(q.y - ry, q.y + ry) - (q.x - rx)
+          if (over > 0) p.x += (over * present) / q.gx
+        }
       }
 
       // ---- materials: reveal + light
-      set.coreMat.emissiveIntensity = 1.5 * rCore * (1 + 0.3 * ex)
-      set.logo.glow.intensity = 1.6 * rCore
+      // the emerald is the accent: a crisp lit gem, not a glare that floods the loops
+      set.coreMat.emissiveIntensity = 0.9 * rCore
+      set.logo.glow.intensity = 0.7 * rCore
       set.loopMat.envMapIntensity = lerp(0.15, 1.5, rLoops)
       set.rimMat.uniforms.uStrength.value = 0.34 * rLoops
       set.plinthMat.envMapIntensity = lerp(0.3, 1.25, rLoops)
       const pu = set.poolUnder.material as THREE.ShaderMaterial
-      pu.uniforms.uStrength.value = 0.4 * rPool
+      pu.uniforms.uStrength.value = 0.3 * rPool
       pu.uniforms.uTime.value = t * 0.35 * calm
       const pt = set.poolTop.material as THREE.ShaderMaterial
       pt.uniforms.uStrength.value = 0.2 * rCore * (1 - 0.6 * ex)
       pt.uniforms.uTime.value = t * 0.3 * calm
       set.backdropMat.color.set(G.mist).multiplyScalar(0.38 * lerp(0.35, 1, rLoops))
 
+      // ---- the etched word: centred behind the mark at rest (the loops bend its middle),
+      // but on landscape never behind a line of copy: as the copy comes in it slides right
+      // and, if it still can't fit, shrinks between the copy and the frame edge
+      const bp = set.backdrop.geometry.parameters
+      // the etch's centre (rig x = 0), projected with this frame's camera
+      const { x: c0, y: cy, gx } = project(0, set.backdrop.position.y, set.backdrop.position.z, ra, tanV, aspect)
+      const w1 = 0.5 * bp.width * gx // NDC half-width at scale 1
+      // free: centred on the mark in the rest poses; during the orbit the rig's lag swings it
+      const xFree = shot.sx * (d + 5.5 * ce) * tanV * aspect + shiftR
+      const cFree = c0 + xFree * gx
+      let bk = 1
+      let bc = cFree
+      if (present > 0) {
+        // the letters run from 0.38 above the plane's centre (cap height) to 0.36 below (baseline)
+        const ph = bp.height / (pr.depth * tanV)
+        const E = edgeAt(cy - 0.36 * ph, cy + 0.38 * ph)
+        const R = Math.max(0.97, cFree + w1) // as far right as it would naturally run
+        let kc = 1
+        let cc = Math.max(cFree, E + w1)
+        if (E + 2 * w1 > R) {
+          const w = Math.max(0.55 * w1, (R - E) / 2)
+          kc = w / w1
+          cc = E + w
+        }
+        bk = lerp(1, kc, present)
+        bc = lerp(cFree, cc, present)
+      }
+      set.backdrop.scale.setScalar(bk)
+      set.backdrop.position.x = xFree + (bc - cFree) / gx
+
       // ---- world: dark studio, strips behind the mark, pools gathered on it
       const wp = ctx.world.params
-      // a small colour journey through the lens: the pool behind the glass cools to iris
-      wp.a = lensMix.set(G.signal).lerp(irisC, 0.6 * lensW)
+      // a small colour journey through the lens: the pool behind the glass cools to iris.
+      // Mint/aqua/iris pools on ink: the emerald stays the core's accent, not a flood.
+      wp.a = lensMix.set(G.mint).lerp(irisC, 0.6 * lensW)
       wp.b = G.aqua
       wp.c = G.iris
       wp.d = G.rose
@@ -265,6 +407,13 @@ export default function create(): Chapter {
       wp.flow = reduced ? 0.3 : 0.75
       wp.strips = lerp(0.3, 1.25, rLoops) * (1 + 0.15 * lensW)
       wp.stripColor = '#eafff5'
+      // strips: at rest a short softbox glow either side of the mark (the centre strip is
+      // off, so no line runs through the emerald); in the lens beat they run tall and all
+      // three slide behind the glass. After the loader they draw in from full height as
+      // the frost clears (not under reduced motion).
+      const drawIn = reduced ? 0 : 1 - rPool
+      wp.stripHeight = lerp(lerp(0.55, 0.95, lensW), 1, drawIn * (1 - lensW))
+      wp.stripMask.set(1, lensW, 1)
       wp.spread = shot.spread
       // the field's own heading drift (World.ts) — cancel it so focus sits behind the mark
       const yaw = Math.atan2(tmpF.x, -tmpF.z)
@@ -287,9 +436,9 @@ export default function create(): Chapter {
 
       // ---- post: bloom on the emerald, frost for the reveal and the final dive
       const pp = ctx.post.params
-      pp.bloomStrength = 0.55
+      pp.bloomStrength = 0.4
       pp.bloomRadius = 0.5
-      pp.bloomThreshold = 0.9
+      pp.bloomThreshold = 1.05
       pp.vignette = 0.36 + 0.1 * lensW
       pp.frost = Math.max(rFrost * 0.75, reduced ? 0 : 0.22 * smoothstep(0.955, 1, local))
 
@@ -299,11 +448,11 @@ export default function create(): Chapter {
       reveal(payoff, smoothstep(0.585, 0.655, local) * (1 - smoothstep(0.925, 0.96, local)), 0)
       setRise(title, local > 0.6 && local < 0.945)
 
-      // callouts: name the parts while the stack is apart
-      const cv = mobile && portrait ? 0 : smoothstep(0.2, 0.25, local) * (1 - smoothstep(0.36, 0.4, local))
+      // callouts: name the parts while the stack is apart (not on phones held upright, nor on
+      // short landscapes, where the parts sit too close for three labels)
+      const roomy = !(mobile && portrait) && frame.height >= 480
+      const cv = roomy ? smoothstep(0.2, 0.25, local) * (1 - smoothstep(0.36, 0.4, local)) : 0
       if (cv > 0) set.pivot.updateMatrixWorld(true)
-      const parts = [loopA, core, loopB]
-      const centres = [set.centres.loopA, set.centres.core, set.centres.loopB]
       for (let i = 0; i < 3; i++) {
         if (cv > 0) parts[i].localToWorld(tmpW.copy(centres[i]))
         callouts[i].update(tmpW, ctx.camera, frame.width, frame.height, cv)

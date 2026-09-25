@@ -378,6 +378,7 @@ export const MICROCOPY = {
   signalEyebrow: 'Hark Digital Design',
   scrollHint: 'Scroll to look closer',
   audio: 'Sound',
+  motion: 'Motion',
   audioOn: 'On',
   audioOff: 'Off',
 }
