@@ -99,5 +99,12 @@ export interface ChapterDef {
   length: number
   /** Local progress where nav jumps land (just past the cut, copy settled). Default derives from length. */
   landing?: number
+  /** Local progress where the section headline shows (heading Tab stop lands here). */
+  intro?: number
+  /**
+   * Glass buffer resolution for this chapter, as a fraction of a DPR-2 frame
+   * (0.55 default). Chapters that show text/screenshots through glass need ~1.
+   */
+  transmission?: number
   load: () => Promise<{ default: ChapterFactory }>
 }

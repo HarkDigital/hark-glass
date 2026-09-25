@@ -121,7 +121,10 @@ const LOD_RE = /float lod = log2\( transmissionSamplerSize\.x \) \* applyIorToRo
 /** Read the transmission buffer at mip 0 (no roughness blur) — crisp text/images through glass. */
 export function sharpTransmission(m: THREE.MeshPhysicalMaterial) {
   const chunk = THREE.ShaderChunk.transmission_pars_fragment
-  if (!LOD_RE.test(chunk)) return
+  if (!LOD_RE.test(chunk)) {
+    if (import.meta.env.DEV) console.warn('[hark] sharpTransmission: three transmission chunk changed; glass will blur')
+    return
+  }
   const sharp = chunk.replace(LOD_RE, 'return textureLod( transmissionSamplerMap, fragCoord.xy, 0.0 );')
   m.onBeforeCompile = shader => {
     shader.fragmentShader = shader.fragmentShader.replace('#include <transmission_pars_fragment>', sharp)

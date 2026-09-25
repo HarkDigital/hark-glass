@@ -561,7 +561,8 @@ a {
 .sr-copy :is(a, button):focus {
   position: fixed;
   left: 50%;
-  bottom: calc(var(--safe-bottom) + 8px);
+  /* top: every chapter's cards/panels live low on phones and mid-left on desktop */
+  top: calc(var(--safe-top) + 8px);
   transform: translateX(-50%);
   z-index: 40;
   width: max-content;
@@ -590,7 +591,7 @@ a {
 .sr-copy :is(h1, h2):focus {
   position: fixed;
   left: 50%;
-  bottom: calc(var(--safe-bottom) + 8px);
+  top: calc(var(--safe-top) + 8px);
   transform: translateX(-50%);
   z-index: 40;
   margin: 0;
@@ -608,7 +609,7 @@ a {
 .sr-copy [data-copy-status]:not(:empty) {
   position: fixed;
   left: 50%;
-  bottom: calc(var(--safe-bottom) + 64px);
+  top: calc(var(--safe-top) + 64px);
   transform: translateX(-50%);
   z-index: 40;
   font: 500 12px/1 var(--font-mono);
@@ -648,4 +649,19 @@ a {
 .skip-link:focus {
   transform: translate(-50%, 0);
   outline: none;
+}
+
+/* phones and scaled-down devices (html.lowfx, set by the engine): no
+   backdrop-filter over the animating canvas — a denser fill instead */
+.lowfx .hud-panel,
+.lowfx .hud-btn--ghost,
+.lowfx .callout-label {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.lowfx .hud-panel {
+  --glass-fill: rgba(12, 16, 25, 0.84);
+}
+.lowfx .hud-btn--ghost {
+  background: rgba(20, 26, 38, 0.82);
 }

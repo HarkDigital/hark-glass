@@ -68,7 +68,8 @@ export const WORLD_DEFAULTS = {
   spread: 1,
   strips: 1,
   stripColor: '#eafff5',
-  stripHeight: 1,
+  // a glow behind the subject that fades before the floor and the top chrome
+  stripHeight: 0.55,
   env: 1,
   envTurn: 0,
   key: 1.6,
@@ -127,13 +128,14 @@ const FIELD_FRAG = /* glsl */ `
     float sh = max(uStripHeight, 0.05) * s;
     float band = exp(-sp.y * sp.y / (1.1 * sh * sh));             // fade top and bottom
     float bars = 0.0;
-    bars += uStripMask.x * exp(-pow2((sp.x + 0.34 * s + 0.05 * sin(t * 0.8)) / (0.035 * s)));
-    bars += uStripMask.y * 0.8 * exp(-pow2((sp.x - 0.18 * s + 0.06 * cos(t * 0.6)) / (0.022 * s)));
-    bars += uStripMask.z * 0.55 * exp(-pow2((sp.x - 0.52 * s - 0.04 * sin(t * 0.5)) / (0.05 * s)));
-    light += uStripColor * bars * band * uStrips * 0.55;
+    // softbox-width bars (thin ones read as poles)
+    bars += uStripMask.x * exp(-pow2((sp.x + 0.34 * s + 0.05 * sin(t * 0.8)) / (0.07 * s)));
+    bars += uStripMask.y * 0.8 * exp(-pow2((sp.x - 0.18 * s + 0.06 * cos(t * 0.6)) / (0.05 * s)));
+    bars += uStripMask.z * 0.55 * exp(-pow2((sp.x - 0.52 * s - 0.04 * sin(t * 0.5)) / (0.09 * s)));
+    light += uStripColor * bars * band * uStrips * 0.4;
     // a low horizon glow: the studio cove
     light += mix(uB, uStripColor, 0.3) * exp(-pow2((p.y + 0.55) / 0.22)) * 0.08;
-    float edge = smoothstep(2.4, 0.4, length(p * vec2(0.8, 1.0)));
+    float edge = 1.0 - smoothstep(0.4, 2.4, length(p * vec2(0.8, 1.0)));
     vec3 col = uBase + light * uGlow * mix(0.5, 1.0, edge);
     col += (hash(gl_FragCoord.xy + fract(t) * 37.0) - 0.5) / 180.0; // dither: no banding in the gradients
     gl_FragColor = vec4(max(col, 0.0), 1.0);

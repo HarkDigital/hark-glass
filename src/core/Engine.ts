@@ -90,10 +90,18 @@ export class Engine {
   private slowFor = 0
   private fastFor = 0
   private perfCooldown = 0
+  /** after a step up: the scale we came from, and how long to watch for a relapse */
+  private upFrom = 0
+  private upWatch = 0
+  /** no stepping up past this until `ceilFor` runs out (a step up that relapsed) */
+  private dprCeil = 1
+  private ceilFor = 0
   /** time-driven cut used for long nav jumps (so we never scrub through five chapters) */
   private jump: { t: number; id: string; local: number; swapped: boolean } | null = null
   /** true while something (e.g. the rotate gate) covers the scene — skip rendering */
   paused = false
+  /** called when the GPU context is gone for good (main.ts shows the fallback) */
+  onContextGone: (() => void) | null = null
   private listenerFailed = new WeakSet<object>()
   private suppressFocusLand = false
   private tmpRight = new THREE.Vector3()
@@ -105,6 +113,8 @@ export class Engine {
     private stages: HTMLElement,
   ) {
     this.mobile = matchMedia('(pointer: coarse)').matches || window.innerWidth < 768
+    // phones (and any device we've had to scale down) drop CSS backdrop-filter
+    document.documentElement.classList.toggle('lowfx', this.mobile)
     this.reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches
 
     this.renderer = new THREE.WebGLRenderer({
@@ -182,13 +192,22 @@ export class Engine {
       // if the GPU never gives the context back, reload once rather than
       // leave an empty sky with floating labels
       lostTimer = window.setTimeout(() => {
+        // reload at most once a minute; a repeat loss shows the static copy
+        // instead of an empty canvas under a live HUD
+        let recent = false
         try {
-          if (sessionStorage.getItem('hark:ctx-reload')) return
-          sessionStorage.setItem('hark:ctx-reload', '1')
+          const last = Number(sessionStorage.getItem('hark:ctx-reload') || 0)
+          recent = Date.now() - last < 60_000
+          if (!recent) sessionStorage.setItem('hark:ctx-reload', String(Date.now()))
         } catch {
           /* storage blocked */
         }
-        location.reload()
+        if (!recent) {
+          location.reload()
+          return
+        }
+        this.running = false
+        this.onContextGone?.()
       }, 3000)
     })
     canvas.addEventListener('webglcontextrestored', () => {
@@ -243,10 +262,13 @@ export class Engine {
       section.addEventListener('focusin', e => {
         if (this.suppressFocusLand) return
         // items (a project, a service, a quote…) can drive the timeline directly
-        const a = (e.target as HTMLElement).closest<HTMLElement>('[data-anchor]')
+        const target = e.target as HTMLElement
+        const a = target.closest<HTMLElement>('[data-anchor]')
         const slot = this.slots.find(x => x.def.id === def.id)
         const anchor = a && slot?.chapter.anchors?.[Number(a.dataset.anchor)]
-        if (anchor != null) this.land(def.id, true, anchor)
+        // the section heading is a stop too: it lands on the chapter's intro beat
+        if (/^H[12]$/.test(target.tagName) && def.intro != null) this.land(def.id, true, def.intro)
+        else if (anchor != null) this.land(def.id, true, anchor)
         else if (this.slots[this.state.index]?.def.id !== def.id) this.land(def.id)
       })
       this.track.appendChild(section)
@@ -466,7 +488,7 @@ export class Engine {
     const slot = this.slots.find(s => s.def.id === id)
     const heading = slot?.section.querySelector<HTMLElement>('h1, h2')
     if (!heading) return
-    heading.tabIndex = -1
+    if (!heading.hasAttribute('tabindex')) heading.tabIndex = -1
     this.suppressFocusLand = true
     heading.focus({ preventScroll: true })
     this.suppressFocusLand = false
@@ -523,23 +545,47 @@ export class Engine {
       const sorted = this.cadenceSorted.subarray(0, this.cadence.length)
       sorted.set(this.cadence)
       sorted.sort()
-      this.baseline = Math.max(1 / 144, sorted[Math.floor(sorted.length * 0.1)])
+      // the display's own interval — but never learn a GPU-bound rate as "the
+      // display": anything slower than ~45 fps is treated as a slow frame
+      this.baseline = Math.min(1 / 45, Math.max(1 / 144, sorted[Math.floor(sorted.length * 0.1)]))
     }
     this.perfEma += (raw - this.perfEma) * 0.05
     this.perfCooldown -= dt
-    const slow = this.perfEma > Math.max(this.baseline * 1.35, 1 / 50)
+    this.ceilFor -= dt
+    if (this.ceilFor <= 0) this.dprCeil = 1
+    // a step up that pushes frames past the cadence again is reverted at once
+    // and capped for a minute (otherwise it can settle between the thresholds)
+    if (this.upWatch > 0) {
+      this.upWatch -= dt
+      if (this.upWatch < 2.5 && this.perfEma > this.baseline * 1.12) {
+        this.dprCeil = this.upFrom
+        this.ceilFor = 60
+        this.dprScale = this.upFrom
+        this.upWatch = 0
+        this.perfCooldown = 6
+        this.resize()
+        return
+      }
+    }
+    const slow = this.perfEma > Math.min(1 / 45, Math.max(this.baseline * 1.25, 1 / 58))
+    const fast = this.perfEma < Math.min(this.baseline * 1.1, 1 / 55)
     this.slowFor = slow ? this.slowFor + dt : 0
-    this.fastFor = this.perfEma < this.baseline * 1.08 ? this.fastFor + dt : 0
+    this.fastFor = fast ? this.fastFor + dt : 0
     if (this.slowFor > 1.5 && this.dprScale > 0.5) {
       this.dprScale = Math.max(0.5, this.dprScale - 0.15)
       this.slowFor = 0
+      this.upWatch = 0
       this.perfCooldown = 6
       this.resize()
-    } else if (this.fastFor > 8 && this.dprScale < 1 && this.perfCooldown <= 0) {
-      this.dprScale = Math.min(1, this.dprScale + 0.1)
+    } else if (this.fastFor > 8 && this.dprScale < Math.min(1, this.dprCeil) && this.perfCooldown <= 0) {
+      this.upFrom = this.dprScale
+      this.dprScale = Math.min(1, this.dprCeil, this.dprScale + 0.1)
       this.fastFor = 0
+      this.upWatch = 3
+      this.perfEma = this.baseline
       this.resize()
     }
+    document.documentElement.classList.toggle('lowfx', this.mobile || this.dprScale < 0.99)
   }
 
   private applyCamera(parallax: number) {
@@ -616,6 +662,10 @@ export class Engine {
     const slot = this.slots[index]
     if (!slot) return
     const local = clamp((scrollVh - slot.start) / slot.def.length)
+    // the glass (transmission) buffer: ~1.1 CSS px per texel is plenty for
+    // refraction; chapters that show sharp text through glass ask for more
+    const ts = this.mobile ? 0.5 : clamp(((slot.def.transmission ?? 0.55) * 2) / this.dpr, 0.35, 1)
+    if (this.renderer.transmissionResolutionScale !== ts) this.renderer.transmissionResolutionScale = ts
 
     // glitch ramps up approaching any internal cut and back down after it
     let d = Infinity
@@ -655,6 +705,12 @@ export class Engine {
       slot.chapter.onEnter?.(slot.ctx)
       const from = this.state.index
       this.state.index = index
+      // scrolled into another chapter by keyboard/scrollbar while a copy-layer
+      // stop of a different chapter still has focus: move focus along (no pill
+      // left over the wrong scene, and the next Tab continues from here)
+      const ae = document.activeElement as HTMLElement | null
+      const sec = ae?.closest<HTMLElement>('.chapter')
+      if (!this.jump && ae && ae.closest('.sr-copy') && sec && sec.dataset.chapter !== slot.def.id) this.focusChapter(slot.def.id)
       document.documentElement.dataset.chapter = slot.def.id
       if (from !== index) {
         const url = index === 0 ? location.pathname + location.search : `#${slot.def.id}`

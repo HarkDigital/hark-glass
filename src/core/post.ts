@@ -96,15 +96,8 @@ const FinalShader = {
 
       float blurPx = 26.0 * uDpr;
 
-      // whole-frame frost
-      float fr = clamp(uFrost, 0.0, 1.0);
-      if (fr > 0.002) {
-        vec3 f = frosted(uv, blurPx * fr * 1.4);
-        f = mix(f, uTint, 0.1 * fr) + 0.03 * fr;
-        col = mix(col, f, smoothstep(0.0, 0.35, fr));
-      }
-
       // ---- THE PANE (chapter cut)
+      float paneIn = 0.0;
       float t = clamp(uTransition, 0.0, 1.0);
       if (t > 0.001) {
         vec2 dir = normalize(vec2(1.0, 0.32));
@@ -117,6 +110,7 @@ const FinalShader = {
         float trail = s * 2.0 - 1.04;
         float bevel = 0.05;
         float inside = step(trail, u) * step(u, lead);
+        paneIn = inside;
         if (inside > 0.5) {
           // distance to the nearest edge (in sweep units) → bevel profile
           float dLead = lead - u;
@@ -143,6 +137,14 @@ const FinalShader = {
           pane += vec3(1.0) * exp(-(dEdge - 0.012) * (dEdge - 0.012) / 0.00006) * bev * 0.12;
           col = pane;
         }
+      }
+
+      // whole-frame frost — only where the pane isn't already frosting
+      float fr = clamp(uFrost, 0.0, 1.0);
+      if (fr > 0.002 && paneIn < 0.5) {
+        vec3 f = frosted(uv, blurPx * fr * 1.4);
+        f = mix(f, uTint, 0.1 * fr) + 0.03 * fr;
+        col = mix(col, f, smoothstep(0.0, 0.35, fr));
       }
 
       col = mix(col, vec3(1.0), clamp(uFlash, 0.0, 1.0));

@@ -57,6 +57,12 @@ async function boot() {
   const loader = createLoader(document.getElementById('loader')!, { skip: params.has('nointro') })
 
   const engine = new Engine(canvas, track, stages)
+  // the GPU context is gone for good: show the static copy, not an empty canvas
+  engine.onContextGone = () => {
+    canvas.remove()
+    stages?.remove()
+    renderFallback(track)
+  }
   engine.assets.onProgress = (done, total) => loader.progress(total ? done / total : 0)
   if (document.fonts?.ready) engine.assets.track(document.fonts.ready)
   await engine.load(CHAPTERS, params.get('only'))

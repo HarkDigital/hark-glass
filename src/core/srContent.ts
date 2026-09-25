@@ -25,12 +25,12 @@ const stop = (id: string, i: number, label: string) => `<a href="#${id}" data-an
 const COPY: Record<string, () => string> = {
   hero: () => `
     <p class="sr-kicker">${esc(BRAND.name)} · ${esc(BRAND.locale)}</p>
-    <h1>${esc(BRAND.tagline)}</h1>
+    <h1 tabindex="0">${esc(BRAND.tagline)}</h1>
     <p>${esc(BRAND.manifesto)}</p>
     <p><a href="#work" data-land="work" data-anchor="0">See the work</a> · <a href="#contact" data-land="contact" data-anchor="0">Start a project</a></p>`,
 
   work: () => `
-    <h2>${esc(SECTIONS.work.title)}</h2>
+    <h2 tabindex="0">${esc(SECTIONS.work.title)}</h2>
     <p>${esc(SECTIONS.work.eyebrow)} — ${WORK.length} sites.</p>
     <ul>${WORK.map(
       (w, i) =>
@@ -42,21 +42,21 @@ const COPY: Record<string, () => string> = {
     ).join('')}</ul>`,
 
   services: () => `
-    <h2>${esc(SECTIONS.services.title)}</h2>
+    <h2 tabindex="0">${esc(SECTIONS.services.title)}</h2>
     <p>${esc(SECTIONS.services.eyebrow)}.</p>
     <ol>${SERVICES.map(
       (s, i) => `<li><h3>${stop('services', i, s.title)}</h3><p>${esc(s.blurb)}</p><p>${s.tags.map(esc).join(' · ')}</p></li>`,
     ).join('')}</ol>`,
 
   shield: () => `
-    <h2>${esc(SECURITY.title)}</h2>
+    <h2 tabindex="0">${esc(SECURITY.title)}</h2>
     <p>${esc(SECURITY.eyebrow)}.</p>
     <p>${esc(SECURITY.body)}</p>
     <p>${esc(STATS[3].value)}: ${esc(STATS[3].label)}</p>
     <p><a href="${esc(SECURITY.href)}" data-anchor="0">${esc(SECURITY.cta.replace(/\s*→\s*$/, ''))}</a></p>`,
 
   voices: () => `
-    <h2>${esc(SECTIONS.voices.title)}</h2>
+    <h2 tabindex="0">${esc(SECTIONS.voices.title)}</h2>
     <p>${esc(SECTIONS.voices.eyebrow)}.</p>
     ${TESTIMONIALS.map(
       (t, i) =>
@@ -65,12 +65,12 @@ const COPY: Record<string, () => string> = {
 
   process: () => `
     <p>How we work</p>
-    <h2>We listen first. Then we build.</h2>
+    <h2 tabindex="0">We listen first. Then we build.</h2>
     <ol>${PROCESS.map((p, i) => `<li><h3>${stop('process', i, p.title)}</h3><p>${esc(p.text)}</p></li>`).join('')}</ol>
     <ul>${[STATS[0], STATS[2], STATS[1]].map((s, i) => `<li>${i === 0 ? stop('process', 4, `${s.value}: ${s.label}`) : `${esc(s.value)}: ${esc(s.label)}`}</li>`).join('')}</ul>`,
 
   contact: () => `
-    <h2>${esc(CONTACT.title)}</h2>
+    <h2 tabindex="0">${esc(CONTACT.title)}</h2>
     <p>${esc(CONTACT.body)}</p>
     <p>Write to: <a href="${esc(CONTACT.href)}">${esc(BRAND.email)}</a> <button type="button" data-copy-email>Copy email address</button> <span data-copy-status aria-live="polite"></span></p>
     <p>Other concepts: ${OTHER_CONCEPTS.map(c => ext(c.url, c.name)).join(' · ')}</p>
