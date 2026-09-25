@@ -1,0 +1,353 @@
+/* Facets — the services chapter. Every selector is scoped to .stage-services. */
+
+.stage-services {
+  --fx-col: min(440px, 36vw);
+  --fx-ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* empty boxes on the safe bands: the camera fit reads their offsets (hud.ts) */
+.stage-services .fx-probe {
+  position: absolute;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  visibility: hidden;
+  pointer-events: none;
+}
+.stage-services .fx-probe--top {
+  top: var(--safe-top);
+}
+.stage-services .fx-probe--bottom {
+  bottom: var(--safe-bottom);
+}
+
+/* ---------------- intro ---------------- */
+.stage-services .fx-intro {
+  position: absolute;
+  left: var(--gutter);
+  top: var(--safe-top);
+  bottom: var(--safe-bottom);
+  width: min(620px, 46vw);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 26px;
+  pointer-events: none;
+}
+.stage-services .fx-intro-eyebrow {
+  opacity: 0;
+  transform: translate3d(0, 8px, 0);
+  filter: blur(6px);
+  transition:
+    opacity 0.35s ease,
+    filter 0.35s ease,
+    transform 0.5s var(--fx-ease);
+}
+.stage-services .fx-intro.is-on .fx-intro-eyebrow {
+  opacity: 1;
+  filter: blur(0);
+  transform: none;
+  transition:
+    opacity 0.6s ease,
+    filter 0.7s var(--fx-ease),
+    transform 0.9s var(--fx-ease);
+}
+.stage-services .fx-intro-title {
+  font-size: clamp(3rem, 6vw, 6.2rem);
+  max-width: 11ch;
+}
+
+/* ---------------- the card ---------------- */
+.stage-services .fx-col {
+  position: absolute;
+  left: var(--gutter);
+  top: var(--safe-top);
+  bottom: var(--safe-bottom);
+  width: var(--fx-col);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  opacity: 0;
+  visibility: hidden;
+  transform: translate3d(-10px, 0, 0);
+  transition:
+    opacity 0.35s ease,
+    transform 0.45s ease,
+    visibility 0s linear 0.45s;
+}
+.stage-services .fx-col.is-on {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition:
+    opacity 0.7s var(--fx-ease),
+    transform 1s var(--fx-ease),
+    visibility 0s;
+}
+.stage-services .fx-card {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 24px 26px 18px;
+}
+.stage-services .fx-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+.stage-services .fx-chip {
+  width: 18px;
+  height: 6px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--fx-c, var(--signal));
+  box-shadow: 0 0 12px var(--fx-c, var(--signal));
+  transition:
+    background 0.6s ease,
+    box-shadow 0.6s ease;
+}
+.stage-services .fx-cur {
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+.stage-services .fx-of {
+  color: var(--fg-muted);
+  white-space: pre;
+}
+
+/* all eleven share one grid cell, so the card never jumps */
+.stage-services .fx-stack {
+  display: grid;
+}
+.stage-services .fx-item {
+  grid-area: 1 / 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  visibility: hidden;
+  transition: visibility 0s linear 0.35s;
+}
+.stage-services .fx-item.is-on {
+  visibility: visible;
+  transition: visibility 0s;
+}
+.stage-services .fx-title {
+  font-size: clamp(1.9rem, 2.85vw, 2.85rem);
+  line-height: 1.02;
+}
+.stage-services .fx-blurb {
+  max-width: 40ch;
+}
+.stage-services .fx-blurb,
+.stage-services .fx-tags {
+  opacity: 0;
+  filter: blur(6px);
+  transform: translate3d(0, 6px, 0);
+  transition:
+    opacity 0.25s ease,
+    filter 0.25s ease,
+    transform 0.3s ease;
+}
+.stage-services .fx-item.is-on .fx-blurb,
+.stage-services .fx-item.is-on .fx-tags {
+  opacity: 1;
+  filter: blur(0);
+  transform: none;
+  transition:
+    opacity 0.6s ease 0.14s,
+    filter 0.7s var(--fx-ease) 0.14s,
+    transform 0.9s var(--fx-ease) 0.14s;
+}
+.stage-services .fx-item.is-on .fx-tags {
+  transition-delay: 0.24s;
+}
+
+/* 01–11: a row of small glass keys; the lit one carries the facet colour */
+.stage-services .fx-keys {
+  display: grid;
+  grid-template-columns: repeat(11, minmax(0, 1fr));
+  gap: 3px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.stage-services .fx-key {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  min-width: 24px;
+  min-height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-faint);
+  cursor: pointer;
+  transition:
+    color 0.3s ease,
+    background 0.4s ease,
+    box-shadow 0.4s ease;
+}
+.stage-services .fx-key::after {
+  content: '';
+  position: absolute;
+  left: 32%;
+  right: 32%;
+  bottom: 3px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--fx-c, var(--signal));
+  box-shadow: 0 0 8px var(--fx-c, var(--signal));
+  opacity: 0;
+  transform: scaleX(0.3);
+  transition:
+    opacity 0.3s ease,
+    transform 0.6s var(--fx-ease);
+}
+.stage-services .fx-key:hover {
+  color: var(--fg);
+  background: rgba(255, 255, 255, 0.06);
+}
+.stage-services .fx-key.is-on {
+  color: var(--fg);
+  background: rgba(255, 255, 255, 0.09);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+.stage-services .fx-key.is-on::after {
+  opacity: 1;
+  transform: none;
+}
+
+/* ---------------- mid-size landscape ---------------- */
+@media (orientation: landscape) and (max-width: 1100px) {
+  .stage-services {
+    --fx-col: min(400px, 40vw);
+  }
+  .stage-services .fx-card {
+    gap: 14px;
+    padding: 20px 22px 16px;
+  }
+  .stage-services .fx-title {
+    font-size: clamp(1.7rem, 3vw, 2.3rem);
+  }
+  .stage-services .fx-blurb {
+    font-size: 14.5px;
+    line-height: 1.55;
+  }
+}
+
+/* ---------------- portrait: crystal above, copy as a bottom panel ---------------- */
+@media (orientation: portrait) {
+  .stage-services .fx-col {
+    top: auto;
+    right: var(--gutter);
+    width: auto;
+    display: block;
+  }
+  .stage-services .fx-intro {
+    top: auto;
+    right: var(--gutter);
+    width: auto;
+    gap: 16px;
+    justify-content: flex-end;
+  }
+  .stage-services .fx-intro-title {
+    font-size: clamp(2.6rem, 10.5vw, 4.6rem);
+  }
+}
+@media (orientation: portrait) and (min-width: 640px) {
+  .stage-services .fx-col {
+    right: auto;
+    width: min(560px, calc(100vw - 2 * var(--gutter)));
+  }
+}
+@media (orientation: portrait) and (max-width: 639px) {
+  .stage-services .fx-card {
+    gap: 12px;
+    padding: 16px 18px 12px;
+  }
+  .stage-services .fx-item {
+    gap: 10px;
+  }
+  .stage-services .fx-title {
+    font-size: 1.6rem;
+    line-height: 1.04;
+  }
+  .stage-services .fx-blurb {
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .stage-services .fx-tags .hud-tag {
+    font-size: 9.5px;
+    padding: 4px 8px;
+  }
+  .stage-services .fx-keys {
+    gap: 2px;
+    padding-top: 10px;
+  }
+  .stage-services .fx-key {
+    min-height: 26px;
+    font-size: 10px;
+    letter-spacing: 0;
+  }
+}
+/* short phones: keep the crystal visible — tighter type, tags live in the copy layer */
+@media (orientation: portrait) and (max-width: 639px) and (max-height: 720px) {
+  .stage-services .fx-title {
+    font-size: 1.35rem;
+  }
+  .stage-services .fx-blurb {
+    font-size: 13px;
+    line-height: 1.45;
+  }
+  .stage-services .fx-tags {
+    display: none;
+  }
+}
+
+/* ---------------- short landscape phones: thin chrome bands ---------------- */
+@media (orientation: landscape) and (max-height: 500px) {
+  .stage-services {
+    --fx-col: min(380px, 46vw);
+  }
+  .stage-services .fx-card {
+    gap: 8px;
+    padding: 12px 16px 8px;
+    border-radius: 16px;
+  }
+  .stage-services .fx-item {
+    gap: 6px;
+  }
+  .stage-services .fx-title {
+    font-size: 1.25rem;
+  }
+  .stage-services .fx-blurb {
+    font-size: 12.5px;
+    line-height: 1.4;
+  }
+  .stage-services .fx-tags {
+    display: none;
+  }
+  .stage-services .fx-keys {
+    padding-top: 6px;
+  }
+  .stage-services .fx-key {
+    min-height: 24px;
+    font-size: 9.5px;
+    letter-spacing: 0;
+  }
+  .stage-services .fx-intro {
+    gap: 12px;
+  }
+  .stage-services .fx-intro-title {
+    font-size: clamp(2rem, 7vw, 3rem);
+  }
+}

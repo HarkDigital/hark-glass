@@ -42,6 +42,10 @@ export interface WorldParams {
   strips: number
   /** strip colour (white-ish; tint for mood) */
   stripColor: THREE.ColorRepresentation
+  /** how tall the strips run around focus.y (1 = default; 0.5 = a short glow behind the subject) */
+  stripHeight: number
+  /** per-strip strength (x = left, y = centre-right, z = far right), 0..1 each */
+  stripMask: THREE.Vector3
   /** studio reflection strength on glass/metal (scene.environmentIntensity) */
   env: number
   /** studio rotation about Y in radians: sweeps reflections across glass */
@@ -64,6 +68,7 @@ export const WORLD_DEFAULTS = {
   spread: 1,
   strips: 1,
   stripColor: '#eafff5',
+  stripHeight: 1,
   env: 1,
   envTurn: 0,
   key: 1.6,
@@ -79,8 +84,8 @@ const FIELD_VERT = /* glsl */ `
 `
 
 const FIELD_FRAG = /* glsl */ `
-  uniform vec3 uA, uB, uC, uD, uBase, uStripColor;
-  uniform float uGlow, uTime, uSpread, uAspect, uTanV, uStrips;
+  uniform vec3 uA, uB, uC, uD, uBase, uStripColor, uStripMask;
+  uniform float uGlow, uTime, uSpread, uAspect, uTanV, uStrips, uStripHeight;
   uniform vec2 uFocus, uShift;
   uniform mat3 uViewRot;
   varying vec3 vDir;
@@ -119,11 +124,12 @@ const FIELD_FRAG = /* glsl */ `
     light += uD * pool(q, f + s * vec2(0.25 + 0.4 * cos(t * 0.3), -1.0 + 0.15 * sin(t * 0.55)), 0.5 * s) * 0.22;
     // backlight strips: tall soft bars behind the focus, slowly drifting apart
     vec2 sp = p - f;
-    float band = exp(-sp.y * sp.y / (1.1 * s * s));               // fade top and bottom
+    float sh = max(uStripHeight, 0.05) * s;
+    float band = exp(-sp.y * sp.y / (1.1 * sh * sh));             // fade top and bottom
     float bars = 0.0;
-    bars += exp(-pow2((sp.x + 0.34 * s + 0.05 * sin(t * 0.8)) / (0.035 * s)));
-    bars += 0.8 * exp(-pow2((sp.x - 0.18 * s + 0.06 * cos(t * 0.6)) / (0.022 * s)));
-    bars += 0.55 * exp(-pow2((sp.x - 0.52 * s - 0.04 * sin(t * 0.5)) / (0.05 * s)));
+    bars += uStripMask.x * exp(-pow2((sp.x + 0.34 * s + 0.05 * sin(t * 0.8)) / (0.035 * s)));
+    bars += uStripMask.y * 0.8 * exp(-pow2((sp.x - 0.18 * s + 0.06 * cos(t * 0.6)) / (0.022 * s)));
+    bars += uStripMask.z * 0.55 * exp(-pow2((sp.x - 0.52 * s - 0.04 * sin(t * 0.5)) / (0.05 * s)));
     light += uStripColor * bars * band * uStrips * 0.55;
     // a low horizon glow: the studio cove
     light += mix(uB, uStripColor, 0.3) * exp(-pow2((p.y + 0.55) / 0.22)) * 0.08;
@@ -142,6 +148,7 @@ export class World {
     ...WORLD_DEFAULTS,
     focus: new THREE.Vector2(0.15, 0.05),
     keyDir: new THREE.Vector3(-0.4, 0.9, 0.5),
+    stripMask: new THREE.Vector3(1, 1, 1),
   }
   private cur = {
     a: new THREE.Color(),
@@ -154,6 +161,8 @@ export class World {
     spread: WORLD_DEFAULTS.spread,
     strips: WORLD_DEFAULTS.strips,
     stripColor: new THREE.Color(),
+    stripHeight: WORLD_DEFAULTS.stripHeight,
+    stripMask: new THREE.Vector3(1, 1, 1),
     env: WORLD_DEFAULTS.env,
     envTurn: WORLD_DEFAULTS.envTurn,
     key: WORLD_DEFAULTS.key,
@@ -170,6 +179,8 @@ export class World {
     uBase: { value: new THREE.Color() },
     uStripColor: { value: new THREE.Color() },
     uStrips: { value: 1 },
+    uStripHeight: { value: 1 },
+    uStripMask: { value: new THREE.Vector3(1, 1, 1) },
     uGlow: { value: 1 },
     uTime: { value: 0 },
     uSpread: { value: 1 },
@@ -184,6 +195,13 @@ export class World {
   private tmpM = new THREE.Matrix4()
   /** the studio environment (PMREM); set as scene.environment */
   envMap: THREE.Texture | null = null
+  /**
+   * Materials that carry the studio env themselves (so their own
+   * envMapIntensity counts: three ignores it for materials that fall back
+   * to scene.environment). The world keeps their rotation and strength in
+   * step with params.envTurn / params.env every frame.
+   */
+  private adopted = new Set<THREE.MeshStandardMaterial>()
 
   constructor(
     private scene: THREE.Scene,
@@ -266,6 +284,32 @@ export class World {
     this.scene.environment = rt.texture
   }
 
+  /**
+   * OPT-IN per-object reflections. By default every material without its own
+   * envMap uses scene.environment, and three then uses params.env for ALL of
+   * them (a material's envMapIntensity is ignored). Call
+   * ctx.world.adopt(group) in a chapter's init to give its materials the
+   * studio env directly: each one's envMapIntensity at that moment becomes a
+   * per-object multiplier of params.env (animate it via
+   * material.userData.envBase), and envTurn keeps rotating them. Materials
+   * that already set an envMap are left alone.
+   */
+  adopt(root: THREE.Object3D) {
+    if (!this.envMap) return
+    root.traverse(o => {
+      const mats = (o as THREE.Mesh).material
+      if (!mats) return
+      for (const m of Array.isArray(mats) ? mats : [mats]) {
+        const sm = m as THREE.MeshStandardMaterial
+        if (!sm.isMeshStandardMaterial || sm.envMap || this.adopted.has(sm)) continue
+        sm.envMap = this.envMap
+        sm.userData.envBase = sm.envMapIntensity
+        sm.needsUpdate = true
+        this.adopted.add(sm)
+      }
+    })
+  }
+
   resetParams() {
     const p = this.params
     p.a = WORLD_DEFAULTS.a
@@ -278,6 +322,8 @@ export class World {
     p.spread = WORLD_DEFAULTS.spread
     p.strips = WORLD_DEFAULTS.strips
     p.stripColor = WORLD_DEFAULTS.stripColor
+    p.stripHeight = WORLD_DEFAULTS.stripHeight
+    p.stripMask.set(1, 1, 1)
     p.env = WORLD_DEFAULTS.env
     p.envTurn = WORLD_DEFAULTS.envTurn
     p.key = WORLD_DEFAULTS.key
@@ -300,6 +346,8 @@ export class World {
     c.flow += (p.flow - c.flow) * k
     c.spread += (p.spread - c.spread) * k
     c.strips += (p.strips - c.strips) * k
+    c.stripHeight += (p.stripHeight - c.stripHeight) * k
+    c.stripMask.lerp(p.stripMask, k)
     lerpColor(c.stripColor, p.stripColor)
     c.env += (p.env - c.env) * k
     c.key += (p.key - c.key) * k
@@ -323,6 +371,8 @@ export class World {
     u.uGlow.value = c.glow
     u.uSpread.value = c.spread
     u.uStrips.value = c.strips
+    u.uStripHeight.value = c.stripHeight
+    u.uStripMask.value.copy(c.stripMask)
     u.uStripColor.value.copy(c.stripColor)
     u.uTime.value = this.clock
     u.uFocus.value.copy(c.focus)
@@ -340,6 +390,10 @@ export class World {
 
     this.scene.environmentIntensity = c.env
     this.scene.environmentRotation.y = c.envTurn
+    for (const m of this.adopted) {
+      m.envMapIntensity = (m.userData.envBase ?? 1) * c.env
+      m.envMapRotation.copy(this.scene.environmentRotation)
+    }
 
     this.key.intensity = c.key
     this.key.position.copy(camera.position).addScaledVector(this.tmpV.copy(p.keyDir).normalize(), 50)

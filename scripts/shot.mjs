@@ -2,7 +2,7 @@
 //
 //   node scripts/shot.mjs --frames=hero:0,hero:0.5,work:0.3 [--port=5173] [--out=shots]
 //                         [--w=1440] [--h=900] [--mobile] [--wait=1800] [--only=hero]
-//                         [--tag=name] [--mouse=0.3,-0.2]
+//                         [--tag=name] [--mouse=0.3,-0.2] [--rm]
 //
 // Each frame is "<chapter>:<local 0..1>" or "p:<global 0..1>". Images land in
 // <out>/<tag?>-<chapter>-<local>.png. Console errors from the page are printed,
@@ -46,6 +46,8 @@ try {
   } else {
     await page.setViewport({ width: W, height: H, deviceScaleFactor: 1 })
   }
+  // --rm: emulate prefers-reduced-motion (check every module's calm path)
+  if (args.rm) await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }])
   page.on('console', m => {
     if (m.type() === 'error' || m.type() === 'warn' || m.type() === 'log') {
       const t = m.text()

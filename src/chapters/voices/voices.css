@@ -1,0 +1,221 @@
+/* ------------------------------------------------------------------
+   Reflections (voices) — the intro headline and the frosted quote panel.
+   Every selector is scoped under .stage-voices.
+   ------------------------------------------------------------------ */
+
+.stage-voices .vc-intro {
+  position: absolute;
+  left: var(--gutter);
+  top: var(--safe-top);
+  width: min(720px, calc(100vw - 2 * var(--gutter)));
+  display: grid;
+  justify-items: start;
+  gap: clamp(14px, 2.2vh, 22px);
+}
+.stage-voices .vc-eyebrow {
+  opacity: 0;
+  transform: translate3d(0, 6px, 0);
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s ease;
+}
+.stage-voices .vc-intro.is-on .vc-eyebrow {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 0.7s ease 0.1s,
+    transform 0.9s cubic-bezier(0.16, 1, 0.3, 1) 0.1s;
+}
+.stage-voices .vc-title {
+  font-size: clamp(2.6rem, 6.4vw, 6.6rem);
+  line-height: 0.95;
+}
+
+/* ---------------- the quote panel ---------------- */
+
+.stage-voices .vc-panel {
+  --glass-fill-strong: rgba(9, 10, 16, 0.7);
+  position: absolute;
+  left: var(--gutter);
+  bottom: var(--safe-bottom);
+  width: min(500px, 38vw);
+  margin: 0;
+  padding: 22px 26px 24px;
+  display: grid;
+  gap: 20px;
+  opacity: 0;
+  visibility: hidden;
+  transform: translate3d(0, 16px, 0);
+  transition:
+    opacity 0.45s ease,
+    transform 0.6s cubic-bezier(0.16, 1, 0.3, 1),
+    visibility 0s linear 0.45s;
+}
+.stage-voices .vc-panel.is-on {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition:
+    opacity 0.7s ease,
+    transform 1s cubic-bezier(0.16, 1, 0.3, 1),
+    visibility 0s linear 0s;
+}
+
+.stage-voices .vc-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.stage-voices .vc-count {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.stage-voices .vc-count b {
+  font-weight: 500;
+  color: var(--fg);
+}
+.stage-voices .vc-dots {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.stage-voices .vc-dots i {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  transition:
+    width 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 0.5s ease,
+    box-shadow 0.5s ease;
+}
+.stage-voices .vc-dots i.is-past {
+  background: rgba(255, 255, 255, 0.46);
+}
+.stage-voices .vc-dots i.is-on {
+  width: 24px;
+  background: var(--accent-grad);
+  box-shadow: 0 0 12px rgba(0, 255, 133, 0.45);
+}
+
+/* the cards stack in one place; the stack's height glides to the active one */
+.stage-voices .vc-stack {
+  position: relative;
+  height: 0;
+  transition: height 0.75s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.stage-voices .vc-card {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  visibility: hidden;
+  transition: visibility 0s linear 0.4s;
+}
+.stage-voices .vc-card.is-on {
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+.stage-voices .vc-quote {
+  margin: 0;
+  font-size: clamp(1.3rem, 1.9vw, 2rem);
+  line-height: 1.24;
+  letter-spacing: -0.024em;
+  /* hang the opening mark in the margin */
+  text-indent: -0.42em;
+}
+.stage-voices .vc-card--long .vc-quote {
+  font-size: clamp(1.18rem, 1.62vw, 1.72rem);
+}
+/* text-indent inherits into the inline-block words; only the paragraph hangs */
+.stage-voices .vc-quote .rise-w,
+.stage-voices .vc-quote .rise-w > span {
+  text-indent: 0;
+}
+/* the incoming quote waits for the outgoing one to clear, and even long
+   quotes land in ~1.1 s */
+.stage-voices .vc-card .rise.is-in .rise-w > span {
+  transition-delay: calc(0.28s + min(var(--i, 0), 26) * 18ms);
+}
+
+.stage-voices .vc-who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin: 18px 0 0;
+}
+.stage-voices .vc-who::before {
+  content: '';
+  width: 22px;
+  height: 1px;
+  background: var(--line-strong);
+}
+.stage-voices .vc-name {
+  color: var(--fg);
+}
+.stage-voices .vc-co {
+  color: var(--fg-muted);
+}
+.stage-voices .vc-card .vc-who .rise.is-in .rise-w > span {
+  transition-delay: calc(0.5s + var(--i, 0) * 30ms);
+}
+
+/* ---------------- portrait: 3D above, the panel below ---------------- */
+
+@media (max-aspect-ratio: 1/1) {
+  .stage-voices .vc-title {
+    font-size: clamp(2.3rem, 10.5vw, 4.6rem);
+  }
+  .stage-voices .vc-panel {
+    left: var(--gutter);
+    right: var(--gutter);
+    width: auto;
+    max-width: 620px;
+    margin: 0 auto;
+    padding: 18px 20px 20px;
+    gap: 14px;
+  }
+  .stage-voices .vc-quote {
+    font-size: clamp(1.08rem, 4.7vw, 1.6rem);
+    line-height: 1.26;
+  }
+  .stage-voices .vc-card--long .vc-quote {
+    font-size: clamp(1rem, 4.25vw, 1.45rem);
+  }
+  .stage-voices .vc-who {
+    margin-top: 14px;
+  }
+}
+
+/* short landscape phones: thinner chrome bands, a compact panel */
+@media (orientation: landscape) and (max-height: 500px) {
+  .stage-voices .vc-title {
+    font-size: clamp(1.9rem, 5.4vw, 2.8rem);
+  }
+  .stage-voices .vc-intro {
+    gap: 10px;
+  }
+  .stage-voices .vc-panel {
+    width: min(440px, 46vw);
+    padding: 12px 16px 14px;
+    gap: 10px;
+    border-radius: 16px;
+  }
+  .stage-voices .vc-quote,
+  .stage-voices .vc-card--long .vc-quote {
+    font-size: clamp(0.9rem, 2.2vw, 1.05rem);
+    line-height: 1.28;
+  }
+  .stage-voices .vc-who {
+    margin-top: 8px;
+  }
+}

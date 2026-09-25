@@ -68,6 +68,12 @@ export interface GlassOpts {
   env?: number
   /** clearcoat for an extra sharp reflection layer */
   coat?: number
+  /**
+   * sample what's behind at full sharpness (three blurs transmission slightly
+   * even at roughness 0): use for glass that must show a screenshot or text
+   * crisply through it. Ignored when frost > 0.
+   */
+  sharp?: boolean
   side?: THREE.Side
 }
 
@@ -87,7 +93,10 @@ export function glass(o: GlassOpts = {}): THREE.MeshPhysicalMaterial {
     ior: o.ior ?? 1.5,
     specularIntensity: 1,
     specularColor: new THREE.Color(0xffffff),
-    envMapIntensity: o.env ?? 1.15,
+    // per-object multiplier of world.params.env — only honoured for materials
+    // a chapter hands to ctx.world.adopt(group) (see World.adopt); otherwise
+    // three uses world.params.env for every glass object
+    envMapIntensity: o.env ?? 1,
     clearcoat: o.coat ?? 0,
     clearcoatRoughness: 0.04,
     side: o.side ?? THREE.FrontSide,
@@ -97,6 +106,7 @@ export function glass(o: GlassOpts = {}): THREE.MeshPhysicalMaterial {
     m.attenuationColor = new THREE.Color(o.tint)
     m.attenuationDistance = o.tintDistance ?? 1.2
   }
+  if (o.sharp && !o.frost) sharpTransmission(m)
   if (o.iridescence) {
     m.iridescence = o.iridescence
     m.iridescenceIOR = 1.3
@@ -106,7 +116,22 @@ export function glass(o: GlassOpts = {}): THREE.MeshPhysicalMaterial {
   return m
 }
 
+const LOD_RE = /float lod = log2\( transmissionSamplerSize\.x \) \* applyIorToRoughness\( roughness, ior \);\s*return textureBicubic\( transmissionSamplerMap, fragCoord\.xy, lod \);/
+
+/** Read the transmission buffer at mip 0 (no roughness blur) — crisp text/images through glass. */
+export function sharpTransmission(m: THREE.MeshPhysicalMaterial) {
+  const chunk = THREE.ShaderChunk.transmission_pars_fragment
+  if (!LOD_RE.test(chunk)) return
+  const sharp = chunk.replace(LOD_RE, 'return textureLod( transmissionSamplerMap, fragCoord.xy, 0.0 );')
+  m.onBeforeCompile = shader => {
+    shader.fragmentShader = shader.fragmentShader.replace('#include <transmission_pars_fragment>', sharp)
+  }
+  m.customProgramCacheKey = () => 'glass-sharp-transmission'
+}
+
 export const GLASS = {
+  /** clear and crisp: text / screenshots behind stay sharp */
+  sharp: () => glass({ thickness: 0.5, dispersion: 0.2, sharp: true }),
   /** crystal-clear, thick, rainbow edges */
   clear: () => glass({ thickness: 0.9, dispersion: 0.4 }),
   /** satin frosted panel */

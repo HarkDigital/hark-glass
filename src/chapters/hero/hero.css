@@ -1,0 +1,173 @@
+/* HERO — "Lens". Everything scoped under .stage-hero. */
+
+/* ---------------- intro: eyebrow, manifesto, scroll hint ---------------- */
+.stage-hero .hg-intro {
+  position: absolute;
+  left: var(--gutter);
+  top: var(--safe-top);
+  width: min(430px, calc(100vw - 2 * var(--gutter)));
+  display: grid;
+  gap: 18px;
+}
+.stage-hero .hg-intro > * {
+  opacity: 0;
+  filter: blur(8px);
+  transform: translate3d(0, 8px, 0);
+  transition:
+    opacity 0.7s ease,
+    filter 1s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 1.1s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.stage-hero .hg-intro.is-in > * {
+  opacity: 1;
+  filter: blur(0);
+  transform: none;
+}
+.stage-hero .hg-intro.is-in > :nth-child(2) {
+  transition-delay: 0.12s;
+}
+.stage-hero .hg-intro.is-in > :nth-child(3) {
+  transition-delay: 0.3s;
+}
+.stage-hero .hg-manifesto {
+  color: rgba(242, 246, 250, 0.84);
+  max-width: 38ch;
+}
+
+/* scroll hint: a hairline with a bead of light that runs along it (finite) */
+.stage-hero .hg-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin: 6px 0 0;
+  color: var(--fg-muted);
+}
+.stage-hero .hg-hint-line {
+  position: relative;
+  width: 44px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.24);
+  overflow: hidden;
+  border-radius: 1px;
+}
+.stage-hero .hg-hint-line::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 18px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(157, 255, 208, 0), #9dffd0, rgba(157, 255, 208, 0));
+  transform: translateX(-20px);
+  animation: hg-bead 2.6s cubic-bezier(0.16, 1, 0.3, 1) 1.4s 4 both;
+}
+@keyframes hg-bead {
+  0% {
+    transform: translateX(-20px);
+  }
+  70%,
+  100% {
+    transform: translateX(46px);
+  }
+}
+
+/* ---------------- payoff: tagline + CTAs ---------------- */
+.stage-hero .hg-payoff {
+  position: absolute;
+  top: var(--safe-top);
+  bottom: var(--safe-bottom);
+  left: var(--gutter);
+  width: min(52vw, 760px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.stage-hero .hg-payoff-inner {
+  display: grid;
+  gap: 22px;
+  justify-items: start;
+}
+.stage-hero .hg-title {
+  font-size: clamp(3rem, 7.6vw, 8rem);
+}
+.stage-hero .hg-locale {
+  margin: 0;
+  color: var(--fg-muted);
+}
+.stage-hero .hg-ctas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+/* callouts: glass pill labels on the exploded parts */
+.stage-hero .hg-callout .callout-label {
+  background: rgba(8, 11, 18, 0.62);
+}
+
+/* ---------------- portrait: the mark above, copy below ---------------- */
+@media (max-aspect-ratio: 1/1) {
+  .stage-hero .hg-intro {
+    top: auto;
+    bottom: var(--safe-bottom);
+    right: var(--gutter);
+    width: auto;
+    max-width: 560px;
+    gap: 14px;
+  }
+  .stage-hero .hg-payoff {
+    right: var(--gutter);
+    width: auto;
+    justify-content: flex-end;
+  }
+  .stage-hero .hg-payoff-inner {
+    gap: 18px;
+  }
+  .stage-hero .hg-title {
+    font-size: clamp(2.6rem, 11.5vw, 6rem);
+  }
+}
+
+@media (max-width: 520px) {
+  .stage-hero .hg-manifesto {
+    font-size: 15px;
+    line-height: 1.55;
+  }
+  .stage-hero .hg-ctas .hud-btn {
+    padding: 12px 18px;
+  }
+}
+
+/* short landscape phones: thin bands, compact copy */
+@media (orientation: landscape) and (max-height: 500px) {
+  .stage-hero .hg-intro {
+    gap: 10px;
+    width: min(360px, 46vw);
+  }
+  .stage-hero .hg-manifesto {
+    font-size: 13.5px;
+    line-height: 1.5;
+  }
+  .stage-hero .hg-payoff-inner {
+    gap: 12px;
+  }
+  .stage-hero .hg-title {
+    font-size: clamp(2rem, 7.4vw, 3.4rem);
+  }
+  .stage-hero .hg-ctas {
+    margin-top: 2px;
+  }
+  .stage-hero .hg-ctas .hud-btn {
+    padding: 10px 16px;
+    font-size: 13px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-hero .hg-intro > *,
+  .stage-hero .hg-intro.is-in > * {
+    transition-delay: 0s !important;
+    filter: none;
+  }
+}
